@@ -13,6 +13,9 @@ from sebba_code.llm import configure_llm
 
 logger = logging.getLogger("sebba_code")
 
+# Kept for reference, but config takes precedence
+DEFAULT_PLANNING_MAX_ITERATIONS = 3
+
 
 @click.group()
 @click.option("--agent-dir", default=".agent", help="Path to .agent directory")
@@ -218,11 +221,135 @@ def run(verbose: bool, dry_run: bool, debug_prompts: bool, max_todos: int | None
 @click.argument("title")
 @click.option("--description", "-d", default="", help="Issue description")
 @click.option("--labels", "-l", default="", help="Issue labels")
-def seed(title: str, description: str, labels: str):
-    """Seed a roadmap from an issue description."""
+@click.option("--refine", is_flag=True, help="Use the planning loop for iterative refinement")
+def seed(title: str, description: str, labels: str, refine: bool):
+    """Seed a roadmap from an issue description.
+    
+    Use --refine to enable the planning loop for iterative draft-critique-refine
+    before writing the final roadmap.
+    """
     _configure_llm_from_config()
 
-    from sebba_code.seed import seed_roadmap_from_issue
+    from sebba_code.seed import init_agent_structure, seed_roadmap_from_issue
 
-    seed_roadmap_from_issue(title, description, labels)
-    click.echo(f"Roadmap seeded at {agent_dir}/gcc/main.md")
+    # Ensure the agent directory structure exists
+    init_agent_structure()
+
+    if refine:
+        click.echo("Using planning loop for refined roadmap...")
+        seed_roadmap_from_issue(title, description, labels, use_refine=True)
+    else:
+        seed_roadmap_from_issue(title, description, labels, use_refine=False)
+
+    click.echo(f"Roadmap seeded at {get_agent_dir()}/gcc/main.md")
+
+
+@cli.command()
+@click.argument("description")
+@click.option("--iterations", "-i", type=int, default=None, help="Override max planning iterations (default: from config)")
+def plan(description: str, iterations: int | None):
+    """Generate a roadmap using the planning loop.
+    
+    Takes a natural language description of what you want to build
+    and transforms it into a structured, validated roadmap through
+    an iterative draft-critique-refine cycle.
+    """
+    _configure_llm_from_config()
+
+    from sebba_code.seed import init_agent_structure
+
+    # Ensure the agent directory structure exists
+    init_agent_structure()
+
+    from sebba_code.graph import build_agent_graph
+
+    graph = build_agent_graph()
+
+    logger.info("Starting planning loop...")
+    
+    # Build initial state with planning fields
+    initial_state = {
+        # Existing fields needed by graph
+        "messages": [],
+        "roadmap": "",
+        "current_todo": None,
+        "target_files": [],
+        "briefing": "",
+        "exploration_mode": "execute",
+        "memory": {
+            "l0_index": "",
+            "l1_files": {},
+            "l2_files": {},
+            "active_rules": {},
+            "session_history": "",
+        },
+        "working_branch": None,
+        "session_start_commit": 0,
+        "todos_completed_this_session": [],
+        "max_todos": None,
+        # Planning loop fields
+        "user_request": description,
+        "draft_roadmap": "",
+        "planning_messages": [],
+        "planning_iteration": 0,
+        "planning_complete": False,
+    }
+
+    # Get max iterations: CLI arg overrides config, config has its own default of 3
+    max_iterations = iterations
+    planning_model = None
+
+    if iterations is None:
+        # Load from config if CLI didn't override
+        config = load_config(get_agent_dir())
+        max_iterations = config.planning.max_iterations
+        if config.planning.model:
+            planning_model = config.planning.model
+
+    # Build configurable dict for graph
+    configurable = {"planning_max_iterations": max_iterations}
+    if planning_model:
+        configurable["planning_model"] = planning_model
+
+    try:
+        for event in graph.stream(
+            initial_state,
+            config={
+                "recursion_limit": 100 + max_iterations * 10,
+                "configurable": configurable,
+            },
+        ):
+            # Stream node outputs for visibility
+            for node_name in event.keys():
+                if node_name.startswith("draft_roadmap"):
+                    click.echo("Drafting roadmap...")
+                elif node_name.startswith("critique_roadmap"):
+                    click.echo("Critiquing roadmap...")
+                elif node_name.startswith("refine_roadmap"):
+                    click.echo("Refining roadmap...")
+                elif node_name == "write_roadmap":
+                    click.echo("Writing final roadmap...")
+    except NotImplementedError as e:
+        click.echo(f"Streaming not supported: {e}")
+        click.echo("Falling back to non-streaming mode...")
+        
+        # Fallback: run without streaming
+        result = graph.invoke(
+            initial_state,
+            config={
+                "recursion_limit": 100 + max_iterations * 10,
+                "configurable": configurable,
+            },
+        )
+        
+        # Log the final state
+        if result.get("planning_complete"):
+            click.echo(f"\nPlanning complete after {result.get('planning_iteration', '?')} iterations.")
+        if result.get("draft_roadmap"):
+            click.echo(f"Generated roadmap with {len(result['draft_roadmap'])} characters.")
+
+    click.echo(f"Roadmap created at {get_agent_dir()}/gcc/main.md")
+
+
+if __name__ == "__main__":
+    cli()

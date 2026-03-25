@@ -27,8 +27,8 @@ Target files: {state["target_files"]}
 Memory index (L0):
 {memory["l0_index"]}
 
-Available L1 files:
-{list_available_files(agent_dir / "memory", depth=1)}
+Available memory files (L1 top-level, L2 in subdirs):
+{list_available_files(agent_dir / "memory", depth=2)}
 
 Return a JSON list of relative paths to load. Be selective.
 """

@@ -6,9 +6,21 @@ from sebba_code.nodes.context import deepen_context
 from sebba_code.nodes.done import roadmap_done
 from sebba_code.nodes.execute import build_execute_subgraph
 from sebba_code.nodes.explore import explore_bootstrap, explore_recon, explore_validate
-from sebba_code.nodes.extract import extract_session, should_continue, sync_progress
+from sebba_code.nodes.extract import (
+    extract_session,
+    finalize_todo,
+    should_continue,
+    sync_progress,
+)
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
-from sebba_code.nodes.planning import needs_planning
+from sebba_code.nodes.planning import (
+    critique_roadmap,
+    draft_roadmap,
+    is_planning_complete,
+    needs_planning,
+    refine_roadmap,
+    write_roadmap,
+)
 from sebba_code.nodes.roadmap import has_todo, is_first_todo, read_roadmap
 from sebba_code.nodes.rules import match_rules
 from sebba_code.state import AgentState
@@ -28,12 +40,21 @@ def build_agent_graph():
     graph.add_node("match_rules", match_rules)
     graph.add_node("deepen_context", deepen_context)
     graph.add_node("execute_todo", build_execute_subgraph())
+    graph.add_node("finalize_todo", finalize_todo)
     graph.add_node("sync_progress", sync_progress)
     graph.add_node("extract_session", extract_session)
     graph.add_node("roadmap_done", roadmap_done)
-    # TODO: Add planning nodes: draft_roadmap, critique_roadmap, refine_roadmap, write_roadmap
 
+    # Add planning nodes
+    graph.add_node("draft_roadmap", draft_roadmap)
+    graph.add_node("critique_roadmap", critique_roadmap)
+    graph.add_node("refine_roadmap", refine_roadmap)
+    graph.add_node("write_roadmap", write_roadmap)
+
+    # Entry point
     graph.add_edge(START, "load_context")
+
+    # Bootstrap check
     graph.add_conditional_edges(
         "load_context",
         needs_bootstrap,
@@ -41,20 +62,42 @@ def build_agent_graph():
     )
     graph.add_edge("explore_bootstrap", "read_roadmap")
 
-    # TODO: Wire planning loop here once nodes are implemented:
-    #   needs_planning? yes → draft_roadmap → critique_roadmap → [complete?] → write_roadmap or refine_roadmap
-    #   needs_planning? no  → fall through to has_todo
-
-    # Roadmap loop
+    # Planning loop - check if planning is needed after loading roadmap context
     graph.add_conditional_edges(
         "read_roadmap",
-        has_todo,
-        {"yes": "check_first_todo", "no": "roadmap_done"},
+        needs_planning,
+        {
+            "yes": "draft_roadmap",
+            "no": "check_first_todo",  # Skip planning, go to normal flow
+        },
     )
+
+    # Planning loop: draft → critique → [complete?] → write or refine
+    graph.add_edge("draft_roadmap", "critique_roadmap")
+    graph.add_conditional_edges(
+        "critique_roadmap",
+        is_planning_complete,
+        {
+            "yes": "write_roadmap",
+            "no": "refine_roadmap",
+        },
+    )
+    # Refine loops back to critique for re-evaluation
+    graph.add_edge("refine_roadmap", "critique_roadmap")
+
+    # After writing roadmap, re-read it to populate current_todo for execution
+    graph.add_edge("write_roadmap", "read_roadmap")
+
+    # Normal roadmap execution flow (check has_todo first, then is_first_todo)
+    def todo_router(state):
+        if has_todo(state) == "no":
+            return "no_todo"
+        return is_first_todo(state)
+
     graph.add_conditional_edges(
         "check_first_todo",
-        is_first_todo,
-        {"yes": "explore_validate", "no": "explore_recon"},
+        todo_router,
+        {"no_todo": "roadmap_done", "yes": "explore_validate", "no": "explore_recon"},
     )
     graph.add_edge("explore_validate", "explore_recon")
 
@@ -64,7 +107,8 @@ def build_agent_graph():
     graph.add_edge("deepen_context", "execute_todo")
 
     # Post-execution
-    graph.add_edge("execute_todo", "sync_progress")
+    graph.add_edge("execute_todo", "finalize_todo")
+    graph.add_edge("finalize_todo", "sync_progress")
     graph.add_edge("sync_progress", "extract_session")
     graph.add_conditional_edges(
         "extract_session",

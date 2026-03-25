@@ -59,6 +59,13 @@ class ExecutionConfig:
 
 
 @dataclass
+class PlanningConfig:
+    max_iterations: int = 3
+    model: str = ""
+    auto_approve: bool = False
+
+
+@dataclass
 class LLMConfig:
     model: str = ""
     model_provider: str = ""
@@ -97,6 +104,7 @@ class AgentConfig:
     sessions: SessionsConfig = field(default_factory=SessionsConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
 
@@ -118,6 +126,7 @@ def load_config(agent_dir: Path) -> AgentConfig:
         ("sessions", SessionsConfig),
         ("retrieval", RetrievalConfig),
         ("execution", ExecutionConfig),
+        ("planning", PlanningConfig),
         ("llm", LLMConfig),
     ]:
         if section_name in raw and isinstance(raw[section_name], dict):
