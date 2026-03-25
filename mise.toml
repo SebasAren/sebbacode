@@ -1,0 +1,36 @@
+[tools]
+uv = "latest"
+
+[env]
+SEBBA_MODEL = "minimax-m27"
+SEBBA_MODEL_PROVIDER = "openai"
+SEBBA_BASE_URL = "{{env.VENICE_API_URL}}"
+SEBBA_CHEAP_MODEL = "minimax-m27"
+SEBBA_CHEAP_MODEL_PROVIDER = "openai"
+SEBBA_CHEAP_BASE_URL = "{{env.VENICE_API_URL}}"
+SEBBA_API_KEY = "{{env.VENICE_API_KEY}}"
+SEBBA_CHEAP_API_KEY = "{{env.VENICE_API_KEY}}"
+
+[tasks.run]
+run = "uv run sebba-code run -v"
+description = "Execute the agent graph against the current roadmap"
+
+[tasks.init]
+run = "uv run sebba-code init"
+description = "Create the .agent/ directory structure"
+
+[tasks.seed]
+run = "uv run sebba-code seed"
+description = "Seed a roadmap from an issue description"
+
+[tasks.debug]
+run = "uv run sebba-code run -v --debug-prompts"
+description = "Execute with full prompt/message debug logging"
+
+[tasks.dry-run]
+run = "uv run sebba-code run --dry-run"
+description = "Print next roadmap todo and exit"
+
+[tasks.test]
+run = "uv run pytest tests/ -v"
+description = "Run all tests"

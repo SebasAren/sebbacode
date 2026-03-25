@@ -1,0 +1,30 @@
+llm:
+  # All fields fall back to SEBBA_* env vars when omitted/empty.
+  # model: "claude-sonnet-4-6"
+  # model_provider: ""
+  # base_url: ""
+  # api_key: ""
+  # cheap_model: "claude-haiku-4-5-20251001"
+  # cheap_model_provider: ""
+  # cheap_base_url: ""
+  # cheap_api_key: ""
+
+loading:
+  l0_max_tokens: 500
+  l1_max_tokens: 2000
+  l2_max_tokens: 4000
+  max_total_context: 12000
+
+gcc:
+  max_main_md_lines: 60
+  k: 1
+  archive_on_complete: true
+
+explorer:
+  bootstrap_on_empty: true
+  validate_new_roadmaps: true
+  recon_before_todo: true
+
+execution:
+  max_todos_per_session: 5
+  max_tool_calls_per_todo: 50
