@@ -195,11 +195,22 @@ Only flag real problems, not theoretical ones.
     main_md = agent_dir / "gcc" / "main.md"
     content = main_md.read_text()
 
+    # Collect existing todo text (lowercased) to prevent semantic duplicates
+    existing_todos = {
+        line.strip().lower()
+        for line in content.split("\n")
+        if line.strip().startswith("- [ ] ") or line.strip().startswith("- [x] ")
+    }
+
     for correction in result.get("corrections", []):
         if correction["type"] == "add_todo":
-            content = append_to_section(
-                content, "## Todos", f"- [ ] {correction['detail']}"
-            )
+            new_todo = f"- [ ] {correction['detail']}"
+            # Skip if any existing todo contains this text or vice versa
+            new_lower = new_todo.lower()
+            if any(new_lower in ex or ex in new_lower for ex in existing_todos):
+                continue
+            content = append_to_section(content, "## Todos", new_todo)
+            existing_todos.add(new_lower)
         elif correction["type"] == "add_constraint":
             content = append_to_section(
                 content, "## Constraints", f"- {correction['detail']}"

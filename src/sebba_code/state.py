@@ -50,3 +50,10 @@ class AgentState(TypedDict):
 
     # Configurable limits
     max_todos: Optional[int]  # None = use default from constants
+
+    # Planning loop
+    user_request: str
+    draft_roadmap: str
+    planning_messages: Annotated[list[BaseMessage], add_messages]
+    planning_iteration: int
+    planning_complete: bool

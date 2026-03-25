@@ -8,7 +8,7 @@ Currently `sebba-code seed "title"` does a single LLM call to generate a roadmap
 
 ## Todos
 
-- [ ] Define planning loop state fields in `src/sebba_code/state.py` (`user_request`, `draft_roadmap`, `planning_messages`, `planning_iteration`, `planning_complete`) and add `needs_planning` routing conditional
+- [x] Define planning loop state fields in `src/sebba_code/state.py` (`user_request`, `draft_roadmap`, `planning_messages`, `planning_iteration`, `planning_complete`) and add `needs_planning` routing conditional
 - [ ] Add `sebba-code plan "description"` CLI command in `src/sebba_code/cli.py` that passes the user request into graph state
 - [ ] Create planning prompt templates (draft, critique, refine) in `src/sebba_code/prompts.py` or a new `planning_prompts.py`
 - [ ] Implement `draft_roadmap` node in `src/sebba_code/nodes/planning.py` — takes user request + loaded context (L0 memory, git state, codebase structure) and generates initial roadmap draft in state (not on disk)

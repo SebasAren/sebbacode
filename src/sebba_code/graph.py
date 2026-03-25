@@ -8,6 +8,7 @@ from sebba_code.nodes.execute import build_execute_subgraph
 from sebba_code.nodes.explore import explore_bootstrap, explore_recon, explore_validate
 from sebba_code.nodes.extract import extract_session, should_continue, sync_progress
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
+from sebba_code.nodes.planning import needs_planning
 from sebba_code.nodes.roadmap import has_todo, is_first_todo, read_roadmap
 from sebba_code.nodes.rules import match_rules
 from sebba_code.state import AgentState
@@ -30,8 +31,8 @@ def build_agent_graph():
     graph.add_node("sync_progress", sync_progress)
     graph.add_node("extract_session", extract_session)
     graph.add_node("roadmap_done", roadmap_done)
+    # TODO: Add planning nodes: draft_roadmap, critique_roadmap, refine_roadmap, write_roadmap
 
-    # Startup
     graph.add_edge(START, "load_context")
     graph.add_conditional_edges(
         "load_context",
@@ -39,6 +40,10 @@ def build_agent_graph():
         {"yes": "explore_bootstrap", "no": "read_roadmap"},
     )
     graph.add_edge("explore_bootstrap", "read_roadmap")
+
+    # TODO: Wire planning loop here once nodes are implemented:
+    #   needs_planning? yes → draft_roadmap → critique_roadmap → [complete?] → write_roadmap or refine_roadmap
+    #   needs_planning? no  → fall through to has_todo
 
     # Roadmap loop
     graph.add_conditional_edges(
