@@ -3,7 +3,7 @@
 import logging
 import re
 
-from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
+from sebba_code.constants import DEFAULT_MAX_TODOS, DEBUG_PROMPTS, get_agent_dir
 from sebba_code.helpers.memory_ops import (
     append_or_create,
     apply_index_updates,
@@ -120,7 +120,10 @@ Rules:
 def should_continue(state: AgentState) -> str:
     logger.info("Checking if session should continue")
     completed = len(state.get("todos_completed_this_session", []))
-    if completed >= 5:
+    max_todos = state.get("max_todos")
+    if max_todos is None:
+        max_todos = DEFAULT_MAX_TODOS
+    if completed >= max_todos:
         return "no"
     if state.get("current_todo") is not None:
         return "yes"

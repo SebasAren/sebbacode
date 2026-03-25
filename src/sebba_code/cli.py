@@ -172,7 +172,8 @@ def status():
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--dry-run", is_flag=True, help="Print next roadmap todo and exit")
 @click.option("--debug-prompts", is_flag=True, help="Log prompts and message summaries at each LLM call")
-def run(verbose: bool, dry_run: bool, debug_prompts: bool):
+@click.option("--max-todos", type=int, default=None, help="Override the default session limit of 5 todos")
+def run(verbose: bool, dry_run: bool, debug_prompts: bool, max_todos: int | None):
     """Execute the agent graph against the current roadmap."""
     if dry_run:
         next_todo = _get_next_todo()
@@ -199,7 +200,10 @@ def run(verbose: bool, dry_run: bool, debug_prompts: bool):
     graph = build_agent_graph()
 
     logger.info("Starting agent...")
-    result = graph.invoke({"messages": []})
+    initial_state = {"messages": []}
+    if max_todos is not None:
+        initial_state["max_todos"] = max_todos
+    result = graph.invoke(initial_state)
 
     completed = result.get("todos_completed_this_session", [])
     if completed:

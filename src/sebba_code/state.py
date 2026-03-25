@@ -47,3 +47,6 @@ class AgentState(TypedDict):
 
     # Session tracking
     todos_completed_this_session: list[str]
+
+    # Configurable limits
+    max_todos: Optional[int]  # None = use default from constants

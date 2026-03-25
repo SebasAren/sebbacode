@@ -4,6 +4,7 @@ from pathlib import Path
 
 AGENT_DIR = Path(".agent")
 DEBUG_PROMPTS = False
+DEFAULT_MAX_TODOS = 5
 
 
 def init_agent_dir(path: Path) -> None:
