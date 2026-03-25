@@ -2,15 +2,9 @@
 
 A LangGraph coding agent with git-native memory. The agent's knowledge, rules, and progress all live as Markdown files in your `.agent/` directory — version-controlled, diffable, and always in sync with your codebase.
 
-## Overview
+## Architecture
 
-sebba-code is an AI coding agent that:
-
-- **Drives execution from a roadmap** stored in `.agent/gcc/main.md`
-- **Persists memory as Markdown** in `.agent/memory/` with tiered loading (L0/L1/L2)
-- **Logs progress as GCC commits** in `.agent/gcc/commits/` that feed memory extraction
-- **Explores branches using git worktrees** for parallel experimentation
-- **Uses path-scoped rules** to enforce conventions per file type or directory
+sebba-code executes todos from a roadmap using a LangGraph state machine with three key systems:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -31,15 +25,68 @@ sebba-code is an AI coding agent that:
                     └── config.yaml      # Agent configuration
 ```
 
+### Graph Flow
+
+The main graph orchestrates three phases:
+
+1. **Load & Bootstrap** — Load L0 memory index, detect git state, bootstrap if codebase is new
+2. **Explore & Prepare** — Validate/recon the target files, load matching rules, deepen context
+3. **Execute & Extract** — Run the inner todo loop, sync progress, distill commits into memory
+
+The `execute_todo` node is itself a subgraph that loops LLM calls → tool execution until done.
+
+### Tiered Memory
+
+Memory is loaded in three tiers to manage context:
+
+| Layer | Files | When Loaded | Token Budget |
+|-------|-------|-------------|--------------|
+| L0 | `_index.md` | Always | ~500 tokens |
+| L1 | `architecture.md`, `conventions.md` | On relevance | ~2000 tokens each |
+| L2 | `architecture/auth-system.md` etc. | On demand | ~4000 tokens |
+
+### Execute Subgraph
+
+The `execute_todo` subgraph provides the agent's tool-calling loop:
+
+```
+llm_call → [tool_calls?] → tools → llm_call
+                        ↓ (no calls)
+                       END
+```
+
+Each iteration assembles a system prompt from roadmap, context, rules, and memory, then invokes the LLM with all bound tools. The loop continues until the LLM returns without tool calls.
+
 ## Installation
 
 ```bash
-# Install from source
-pip install -e .
-
-# Or with uv
+# Install with uv (recommended)
 uv pip install -e .
+
+# Or with pip
+pip install -e .
 ```
+
+Requires Python 3.11+.
+
+## CLI Reference
+
+| Command | Flag | Description |
+|---------|------|-------------|
+| `run` | `--verbose`, `-v` | Enable DEBUG-level logging |
+| `run` | `--dry-run` | Print next roadmap todo and exit without executing |
+| `run` | `--debug-prompts` | Log prompts and message summaries at each LLM call |
+| `run` | `--max-todos N` | Override the session limit of 5 todos |
+| `init` | — | Create the `.agent/` directory structure |
+| `seed` | `--description`, `-d` | Issue description for roadmap generation |
+| `seed` | `--labels`, `-l` | Labels to include in roadmap |
+| `status` | — | Print summary of roadmap progress, GCC commits, and memory files |
+
+### Global Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--agent-dir` | `.agent` | Path to the agent directory |
 
 ## Quick Start
 
@@ -47,14 +94,26 @@ uv pip install -e .
 # 1. Initialize the .agent/ directory structure
 sebba-code init
 
-# 2. Seed a roadmap (or create .agent/gcc/main.md manually)
-sebba-code seed "Implement user authentication"
+# 2. Seed a roadmap from an issue
+sebba-code seed "Implement user authentication" -d "Add JWT-based auth" -l "auth,backend"
 
 # 3. Run the agent
 sebba-code run
 
-# With verbose logging
+# Preview what the agent will do
+sebba-code run --dry-run
+
+# Run with verbose output
 sebba-code run --verbose
+
+# Debug LLM prompts
+sebba-code run --debug-prompts
+
+# Limit to 2 todos per session
+sebba-code run --max-todos 2
+
+# Check agent status
+sebba-code status
 ```
 
 ## Configuration
@@ -213,9 +272,7 @@ The execution subgraph provides these tools:
 | `run_command` | Execute shell command |
 | `write_file` | Write content to file |
 
-## Architecture
-
-### Graph Nodes
+## Graph Nodes
 
 ```
 load_context        → Load L0/L1/L2 memory, check if bootstrap needed
@@ -261,16 +318,13 @@ AgentState {
 
 ```bash
 # Install dev dependencies
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # Run tests
 pytest
 
 # With coverage
 pytest --cov=sebba_code
-
-# Type checking (if configured)
-mypy src/sebba_code/
 ```
 
 ## Project Structure

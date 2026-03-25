@@ -1,0 +1,1 @@
+uv is primary installation method: uv pip install -e . for main, uv pip install -e ".[dev]" for dev deps. uv.lock exists in repo.

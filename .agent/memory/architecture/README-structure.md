@@ -1,0 +1,1 @@
+README reorganization order: Architecture (Graph Flow, Tiered Memory, Execute Subgraph) → Installation → CLI Reference. Execute Subgraph is a third Architecture subsection.
