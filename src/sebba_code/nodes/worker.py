@@ -13,7 +13,7 @@ from sebba_code.helpers.files import is_relevant, list_available_files, summariz
 from sebba_code.helpers.markdown import summarise_file
 from sebba_code.helpers.memory_ops import format_session_from_summaries
 from sebba_code.helpers.parsing import format_dict, parse_json, parse_json_list
-from sebba_code.llm import get_cheap_llm, get_llm
+from sebba_code.llm import get_cheap_llm, get_llm, invoke_with_timeout
 from sebba_code.state import TaskResult, WorkerOutput, WorkerState
 from sebba_code.tools import get_worker_tools
 
@@ -387,13 +387,17 @@ def worker_summarize(state: WorkerState) -> dict:
                 f' "decisions_made": "choices and rationale (or empty string)",'
                 f' "files_touched": "comma-separated files modified (or empty string)"}}'
             )
-            response = get_cheap_llm().invoke(prompt)
+            logger.info("worker_summarize: calling cheap LLM for task %s", task["id"])
+            response = invoke_with_timeout(get_cheap_llm(), prompt)
+            logger.info("worker_summarize: LLM responded for task %s", task["id"])
             result = parse_json(response.content)
             if result:
                 summary_text = result.get("summary", summary_text)
                 what_i_did = result.get("what_i_did", what_i_did)
                 decisions_made = result.get("decisions_made", "")
                 files_touched = result.get("files_touched", "")
+        except TimeoutError:
+            logger.warning("Task %s summary LLM call timed out, using fallback", task["id"])
         except Exception:
             logger.warning("Task summary failed, using fallback", exc_info=True)
 
@@ -467,8 +471,13 @@ Rules:
 
     try:
         llm = get_cheap_llm()
-        response = llm.invoke(extraction_prompt)
+        logger.info("worker_extract_memory: calling cheap LLM for task %s", task["id"])
+        response = invoke_with_timeout(llm, extraction_prompt)
+        logger.info("worker_extract_memory: LLM responded for task %s", task["id"])
         updates = parse_json(response.content)
+    except TimeoutError:
+        logger.warning("Task %s memory extraction LLM call timed out", task["id"])
+        updates = {}
     except Exception:
         logger.warning("Per-task memory extraction failed", exc_info=True)
         updates = {}

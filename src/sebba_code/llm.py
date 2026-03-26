@@ -1,9 +1,13 @@
 """LLM client initialization and configuration."""
 
+import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+
+logger = logging.getLogger("sebba_code")
 
 _llm: BaseChatModel | None = None
 _cheap_llm: BaseChatModel | None = None
@@ -26,6 +30,7 @@ def _build_llm(
         kwargs["api_key"] = api_key
     if timeout > 0:
         kwargs["timeout"] = timeout
+        kwargs["request_timeout"] = timeout
     return init_chat_model(model, **kwargs)
 
 
@@ -40,6 +45,27 @@ def _get_llm_timeout() -> int:
         return load_config(get_agent_dir()).execution.llm_timeout
     except Exception:
         return 120
+
+
+def invoke_with_timeout(
+    llm: BaseChatModel,
+    prompt,
+    timeout_seconds: int | None = None,
+):
+    """Invoke an LLM with a hard Python-level timeout.
+
+    Uses concurrent.futures to enforce the timeout regardless of whether
+    the underlying HTTP client respects its own timeout settings.
+    """
+    if timeout_seconds is None:
+        timeout_seconds = _get_llm_timeout()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(llm.invoke, prompt)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            logger.warning("LLM call timed out after %ds", timeout_seconds)
+            raise TimeoutError(f"LLM call timed out after {timeout_seconds}s")
 
 
 def get_llm(model: str | None = None) -> BaseChatModel:
