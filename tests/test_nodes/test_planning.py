@@ -1,12 +1,13 @@
 """Tests for planning loop nodes in src/sebba_code/nodes/planning.py."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from sebba_code.nodes.planning import (
     _check_unnecessary_delegation,
     _is_explore_task,
+    _run_tool_calls_parallel,
     is_planning_complete,
     plan_critique,
     plan_draft,
@@ -425,16 +426,25 @@ class TestExploreToolPreference:
         assert "directly" in rejection.lower()
 
 
+def _mock_llm_no_tools(monkeypatch, content=SAMPLE_PLAN_JSON):
+    """Set up a mock LLM that returns content with no tool calls."""
+    mock_response = MagicMock()
+    mock_response.content = content
+    mock_response.tool_calls = None
+
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm.invoke.return_value = mock_response
+
+    monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
+    return mock_llm
+
+
 class TestPlanDraft:
     """Tests for plan_draft output."""
 
     def test_draft_returns_plan_content(self, monkeypatch):
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = SAMPLE_PLAN_JSON
-        mock_llm.invoke.return_value = mock_response
-        monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
-
+        _mock_llm_no_tools(monkeypatch)
         state = _make_state()
         result = plan_draft(state)
 
@@ -442,49 +452,95 @@ class TestPlanDraft:
         assert "tasks" in result["draft_plan"]
 
     def test_draft_sets_iteration_to_1(self, monkeypatch):
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = SAMPLE_PLAN_JSON
-        mock_llm.invoke.return_value = mock_response
-        monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
-
+        _mock_llm_no_tools(monkeypatch)
         state = _make_state(planning_iteration=0)
         result = plan_draft(state)
 
         assert result["planning_iteration"] == 1
 
-    def test_draft_uses_user_request(self, monkeypatch):
-        mock_llm = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = SAMPLE_PLAN_JSON
-        mock_llm.invoke.return_value = mock_response
-        monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
+    def test_draft_preserves_iteration_on_redraft(self, monkeypatch):
+        """On refinement re-drafts, iteration should be preserved (not reset to 1)."""
+        _mock_llm_no_tools(monkeypatch)
+        state = _make_state(planning_iteration=2)
+        result = plan_draft(state)
 
+        assert result["planning_iteration"] == 2
+
+    def test_draft_uses_user_request(self, monkeypatch):
+        _mock_llm_no_tools(monkeypatch)
         state = _make_state(user_request="Build a payment system")
         result = plan_draft(state)
 
         assert "draft_plan" in result
 
+    def test_draft_binds_explore_tool(self, monkeypatch):
+        """Verify the LLM has explore_codebase bound as a tool."""
+        mock_llm = _mock_llm_no_tools(monkeypatch)
+        state = _make_state()
+        plan_draft(state)
+
+        mock_llm.bind_tools.assert_called_once()
+        tools = mock_llm.bind_tools.call_args[0][0]
+        assert len(tools) == 1
+        assert tools[0].name == "explore_codebase"
+
+    def test_draft_executes_tool_calls(self, monkeypatch):
+        """When LLM returns tool calls, they should be executed."""
+        # First response: tool call
+        tool_response = MagicMock()
+        tool_response.content = ""
+        tool_response.tool_calls = [
+            {"id": "call_1", "name": "explore_codebase", "args": {"question": "test?"}}
+        ]
+
+        # Second response: final plan (no tool calls)
+        final_response = MagicMock()
+        final_response.content = SAMPLE_PLAN_JSON
+        final_response.tool_calls = None
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.invoke.side_effect = [tool_response, final_response]
+        monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
+
+        mock_explore = MagicMock()
+        mock_explore.name = "explore_codebase"
+        mock_explore.invoke.return_value = "Found auth patterns in src/auth/"
+        monkeypatch.setattr(
+            "sebba_code.nodes.planning.explore_codebase", mock_explore, raising=False
+        )
+
+        # Patch the import inside plan_draft
+        with patch(
+            "sebba_code.tools.explore_agent.explore_codebase", mock_explore
+        ):
+            state = _make_state()
+            result = plan_draft(state)
+
+        assert result["draft_plan"] == SAMPLE_PLAN_JSON
+        mock_explore.invoke.assert_called_once_with({"question": "test?"})
+
     def test_draft_includes_explore_directive_in_prompt(self, monkeypatch):
         """Verify the draft prompt includes the explore_codebase directive."""
-        captured_prompts = []
+        captured_messages = []
 
-        def mock_invoke(prompt):
-            captured_prompts.append(prompt)
+        def mock_invoke(messages):
+            captured_messages.extend(messages)
             mock_response = MagicMock()
             mock_response.content = SAMPLE_PLAN_JSON
+            mock_response.tool_calls = None
             return mock_response
 
         mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
         mock_llm.invoke.side_effect = mock_invoke
         monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
 
         state = _make_state()
         plan_draft(state)
 
-        # Verify the prompt contains the explore directive
-        assert len(captured_prompts) == 1
-        prompt = captured_prompts[0]
+        assert len(captured_messages) == 1
+        prompt = captured_messages[0].content
         assert "explore_codebase" in prompt
         assert "Explore Before Planning" in prompt
 
@@ -526,15 +582,46 @@ class TestPlanCritique:
 class TestPlanRefine:
     """Tests for plan_refine."""
 
-    def test_increments_iteration(self):
+    def test_passes_through_below_max(self):
+        """Below max iterations, plan_refine returns empty dict (routes to plan_draft)."""
         state = _make_state(draft_plan=SAMPLE_PLAN_JSON, planning_iteration=1)
         result = plan_refine(state, configurable={"planning_max_iterations": 5})
-        assert result["planning_iteration"] == 2
+        assert result == {}
 
     def test_marks_complete_at_max(self):
-        state = _make_state(draft_plan=SAMPLE_PLAN_JSON, planning_iteration=2)
+        state = _make_state(draft_plan=SAMPLE_PLAN_JSON, planning_iteration=3)
         result = plan_refine(state, configurable={"planning_max_iterations": 3})
         assert result.get("planning_complete") is True
+
+
+class TestRunToolCallsParallel:
+    """Tests for _run_tool_calls_parallel helper."""
+
+    def test_executes_calls_and_returns_tool_messages(self):
+        mock_tool = MagicMock()
+        mock_tool.invoke.side_effect = lambda args: f"answer to {args['question']}"
+
+        tool_calls = [
+            {"id": "c1", "name": "explore_codebase", "args": {"question": "q1"}},
+            {"id": "c2", "name": "explore_codebase", "args": {"question": "q2"}},
+        ]
+        results = _run_tool_calls_parallel(tool_calls, mock_tool)
+
+        assert len(results) == 2
+        assert results[0].tool_call_id == "c1"
+        assert results[1].tool_call_id == "c2"
+        assert "q1" in results[0].content
+        assert "q2" in results[1].content
+
+    def test_handles_errors_gracefully(self):
+        mock_tool = MagicMock()
+        mock_tool.invoke.side_effect = RuntimeError("boom")
+
+        tool_calls = [{"id": "c1", "name": "explore_codebase", "args": {"question": "q"}}]
+        results = _run_tool_calls_parallel(tool_calls, mock_tool)
+
+        assert len(results) == 1
+        assert "Error" in results[0].content
 
 
 class TestIsComplete:

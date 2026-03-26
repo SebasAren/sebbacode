@@ -2,7 +2,10 @@
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
+
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from sebba_code.constants import get_agent_dir
 from sebba_code.helpers.parsing import parse_json
@@ -68,11 +71,41 @@ def _get_planning_model(configurable: dict | None = None) -> str:
     return ""
 
 
+MAX_TOOL_ROUNDS = 3
+
+
+def _run_tool_calls_parallel(tool_calls, explore_tool):
+    """Execute multiple explore_codebase calls in parallel, return ToolMessages."""
+    results = {}
+    with ThreadPoolExecutor() as pool:
+        futures = {
+            pool.submit(explore_tool.invoke, tc["args"]): tc
+            for tc in tool_calls
+        }
+        for future in as_completed(futures):
+            tc = futures[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = f"Error: {e}"
+            results[tc["id"]] = result
+
+    # Return ToolMessages in original order
+    return [
+        ToolMessage(content=results[tc["id"]], tool_call_id=tc["id"])
+        for tc in tool_calls
+    ]
+
+
 def plan_draft(state: AgentState, configurable: dict | None = None) -> dict:
     """Generate a structured task plan with dependencies as JSON.
 
-    On rejection, includes the rejected plan and reason for context.
+    Uses a tool-calling loop with explore_codebase so the planner can
+    explore the codebase before creating tasks. On rejection, includes
+    the rejected plan and reason for context.
     """
+    from sebba_code.tools.explore_agent import explore_codebase
+
     user_request = state.get("user_request", "")
     rejection_reason = state.get("rejection_reason", "")
     previous_plan = state.get("draft_plan", "")
@@ -88,14 +121,32 @@ def plan_draft(state: AgentState, configurable: dict | None = None) -> dict:
 
     model = _get_planning_model(configurable)
     llm = get_llm(model=model) if model else get_llm()
-    response = llm.invoke(prompt)
+    llm_with_tools = llm.bind_tools([explore_codebase])
+
+    messages = [HumanMessage(content=prompt)]
+
+    for i in range(MAX_TOOL_ROUNDS):
+        response = llm_with_tools.invoke(messages)
+        messages.append(response)
+
+        if not getattr(response, "tool_calls", None):
+            break
+
+        logger.info(
+            "plan_draft: round %d — %d explore calls",
+            i + 1,
+            len(response.tool_calls),
+        )
+        tool_messages = _run_tool_calls_parallel(response.tool_calls, explore_codebase)
+        messages.extend(tool_messages)
 
     draft_content = response.content if hasattr(response, "content") else str(response)
     logger.debug("Generated task plan (%d chars)", len(draft_content))
 
+    current = state.get("planning_iteration", 0)
     return {
         "draft_plan": draft_content,
-        "planning_iteration": 1,
+        "planning_iteration": max(current, 1),
     }
 
 
@@ -220,22 +271,13 @@ def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
 
 
 def plan_refine(state: AgentState, configurable: dict | None = None) -> dict:
-    """Apply critique fixes to the draft plan."""
-    draft = state.get("draft_plan", "")
+    """Gate before re-drafting: stop if max iterations reached."""
     planning_iteration = state.get("planning_iteration", 0)
     max_iterations = _get_max_iterations(configurable)
 
-    new_iteration = planning_iteration + 1
-
-    if new_iteration >= max_iterations:
+    if planning_iteration >= max_iterations:
         logger.info("Max iterations reached, marking complete")
-        return {
-            "planning_iteration": new_iteration,
-            "planning_complete": True,
-        }
+        return {"planning_complete": True}
 
-    logger.debug("Refined plan (iteration %d)", new_iteration)
-    return {
-        "draft_plan": draft,
-        "planning_iteration": new_iteration,
-    }
+    logger.debug("Routing to plan_draft for refinement (iteration %d)", planning_iteration)
+    return {}

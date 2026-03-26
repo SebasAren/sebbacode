@@ -66,7 +66,7 @@ def build_agent_graph(checkpointer=None):
         is_planning_complete,
         {"yes": "build_dag", "no": "plan_refine"},
     )
-    graph.add_edge("plan_refine", "plan_critique")
+    graph.add_edge("plan_refine", "plan_draft")
 
     # DAG construction → approval
     graph.add_edge("build_dag", "human_approval")
