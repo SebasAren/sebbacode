@@ -66,7 +66,7 @@ def dispatch_tasks(state: AgentState) -> Command[Literal["task_worker", "extract
         worker_state = {
             "task": task,
             "messages": [],
-            "briefing": "",
+            "worker_briefing": "",
             "memory": state["memory"],
             "target_files": task["target_files"],
             "working_branch": state.get("working_branch"),

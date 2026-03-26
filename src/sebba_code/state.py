@@ -47,7 +47,7 @@ class WorkerState(TypedDict):
 
     task: Task
     messages: Annotated[list[BaseMessage], add_messages]
-    briefing: str
+    worker_briefing: str
     memory: AgentMemoryContext
     target_files: list[str]
     working_branch: Optional[str]

@@ -95,7 +95,7 @@ Write a concise, actionable briefing covering:
 
     llm = get_llm()
     response = llm.invoke(recon_prompt)
-    return {"briefing": response.content}
+    return {"worker_briefing": response.content}
 
 
 def worker_match_rules(state: WorkerState) -> dict:
@@ -199,8 +199,8 @@ def _build_worker_system_prompt(state: WorkerState) -> str:
         f"Target files: {', '.join(task['target_files']) if task['target_files'] else 'none specified'}"
     )
 
-    if state.get("briefing"):
-        sections.append(f"# Codebase Briefing\n{state['briefing']}")
+    if state.get("worker_briefing"):
+        sections.append(f"# Codebase Briefing\n{state['worker_briefing']}")
 
     sections.append(f"# Project Context\n{memory['l0_index']}")
 
@@ -232,7 +232,7 @@ def _llm_call(state: WorkerState) -> dict:
     injected_human_msg = None
     if not any(isinstance(m, HumanMessage) for m in messages):
         task = state["task"]
-        briefing = state.get("briefing", "")
+        briefing = state.get("worker_briefing", "")
         user_msg = f"Execute this task: {task['description']}"
         if briefing:
             user_msg += f"\n\nBriefing:\n{briefing}"
