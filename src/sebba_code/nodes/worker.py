@@ -14,7 +14,7 @@ from sebba_code.helpers.markdown import summarise_file
 from sebba_code.helpers.memory_ops import format_session_from_summaries
 from sebba_code.helpers.parsing import format_dict, parse_json, parse_json_list
 from sebba_code.llm import get_cheap_llm, get_llm
-from sebba_code.state import TaskResult, WorkerState
+from sebba_code.state import TaskResult, WorkerOutput, WorkerState
 from sebba_code.tools import get_worker_tools
 
 logger = logging.getLogger("sebba_code")
@@ -413,7 +413,7 @@ def build_task_worker():
     llm_loop = llm_graph.compile()
 
     # Full worker pipeline
-    graph = StateGraph(WorkerState)
+    graph = StateGraph(WorkerState, output=WorkerOutput)
     graph.add_node("recon", worker_recon)
     graph.add_node("match_rules", worker_match_rules)
     graph.add_node("deepen_context", worker_deepen_context)

@@ -42,6 +42,12 @@ class TaskResult(TypedDict):
     memory_updates: dict  # collected for sequential application
 
 
+class WorkerOutput(TypedDict):
+    """Output schema for the worker subgraph — only task_results flows to parent."""
+
+    task_results: Annotated[list[TaskResult], operator.add]
+
+
 class WorkerState(TypedDict):
     """Per-task state passed via Send()."""
 
