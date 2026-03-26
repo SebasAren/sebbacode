@@ -45,6 +45,7 @@ class RetrievalConfig:
 class ExecutionConfig:
     max_parallel_workers: int = 3
     max_tool_calls_per_task: int = 50
+    llm_timeout: int = 120  # seconds per LLM call
 
 
 @dataclass

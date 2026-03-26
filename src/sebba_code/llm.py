@@ -14,6 +14,7 @@ def _build_llm(
     model_provider: str = "",
     base_url: str = "",
     api_key: str = "",
+    timeout: int = 0,
 ) -> BaseChatModel:
     """Build an LLM instance with optional provider, base URL, and API key."""
     kwargs: dict = {}
@@ -23,7 +24,22 @@ def _build_llm(
         kwargs["base_url"] = base_url
     if api_key:
         kwargs["api_key"] = api_key
+    if timeout > 0:
+        kwargs["timeout"] = timeout
     return init_chat_model(model, **kwargs)
+
+
+def _get_llm_timeout() -> int:
+    """Get LLM timeout from env or config."""
+    env_val = os.environ.get("SEBBA_LLM_TIMEOUT", "")
+    if env_val:
+        return int(env_val)
+    try:
+        from sebba_code.config import load_config
+        from sebba_code.constants import get_agent_dir
+        return load_config(get_agent_dir()).execution.llm_timeout
+    except Exception:
+        return 120
 
 
 def get_llm(model: str | None = None) -> BaseChatModel:
@@ -37,6 +53,7 @@ def get_llm(model: str | None = None) -> BaseChatModel:
             model_provider=os.environ.get("SEBBA_MODEL_PROVIDER", ""),
             base_url=os.environ.get("SEBBA_BASE_URL", ""),
             api_key=os.environ.get("SEBBA_API_KEY", ""),
+            timeout=_get_llm_timeout(),
         )
     return _llm
 
@@ -52,6 +69,7 @@ def get_cheap_llm(model: str | None = None) -> BaseChatModel:
             model_provider=os.environ.get("SEBBA_CHEAP_MODEL_PROVIDER", ""),
             base_url=os.environ.get("SEBBA_CHEAP_BASE_URL", ""),
             api_key=os.environ.get("SEBBA_CHEAP_API_KEY", ""),
+            timeout=_get_llm_timeout(),
         )
     return _cheap_llm
 

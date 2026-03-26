@@ -6,7 +6,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 
 from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
 from sebba_code.helpers.files import is_relevant, list_available_files, summarize_memory_files, summarize_rules
@@ -19,6 +19,38 @@ from sebba_code.tools import get_worker_tools
 
 logger = logging.getLogger("sebba_code")
 debug_logger = logging.getLogger("sebba_code.debug")
+
+
+def _get_max_tool_calls() -> int:
+    """Get max tool calls per task from config."""
+    try:
+        from sebba_code.config import load_config
+        return load_config(get_agent_dir()).execution.max_tool_calls_per_task
+    except Exception:
+        return 50
+
+
+def _tools_condition_with_limit(state: WorkerState) -> str:
+    """Route to tools or __end__, enforcing max_tool_calls_per_task."""
+    messages = state.get("messages", [])
+    if not messages:
+        return "__end__"
+    last_message = messages[-1]
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+        return "__end__"
+
+    tool_call_count = sum(
+        1 for m in messages
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)
+    )
+    max_calls = _get_max_tool_calls()
+    if tool_call_count >= max_calls:
+        logger.warning(
+            "worker: reached max tool calls (%d/%d), forcing completion",
+            tool_call_count, max_calls,
+        )
+        return "__end__"
+    return "tools"
 
 
 def worker_recon(state: WorkerState) -> dict:
@@ -292,9 +324,47 @@ def worker_summarize(state: WorkerState) -> dict:
     dag_mutations: list[dict] = []
 
     messages = state.get("messages", [])
+
+    # Extract DAG mutations from signal_blocked / add_subtask tool calls
+    for msg in messages:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for tc in msg.tool_calls:
+                if tc["name"] == "signal_blocked":
+                    dag_mutations.append({
+                        "type": "add_blocking_task",
+                        "description": tc["args"]["blocking_task_description"],
+                        "reason": tc["args"]["reason"],
+                        "blocked_task_id": task["id"],
+                    })
+                elif tc["name"] == "add_subtask":
+                    target_files = tc["args"].get("target_files", "")
+                    files = [f.strip() for f in target_files.split(",") if f.strip()] if target_files else []
+                    dag_mutations.append({
+                        "type": "add_subtask",
+                        "description": tc["args"]["description"],
+                        "target_files": files,
+                    })
+
+    # Detect if the worker failed (timeout, error, or hit loop limit)
+    failed = False
+    if messages:
+        last = messages[-1]
+        if isinstance(last, AIMessage) and isinstance(last.content, str) and last.content.startswith("Task execution failed:"):
+            failed = True
+            summary_text = last.content
+            what_i_did = f"- Failed: {last.content}"
+
+    if failed and not dag_mutations:
+        # Create a retry subtask so the work isn't lost
+        dag_mutations.append({
+            "type": "add_subtask",
+            "description": f"Retry: {task['description']} (previous attempt failed)",
+            "target_files": task.get("target_files", []),
+        })
+
     formatted = _format_messages_for_summary(messages)
 
-    if formatted:
+    if formatted and not failed:
         try:
             prompt = (
                 f"Summarize this coding session for a progress log.\n\n"
@@ -408,16 +478,24 @@ def build_task_worker():
     llm_graph.add_node("llm_call", _llm_call)
     llm_graph.add_node("tools", ToolNode(tools))
     llm_graph.set_entry_point("llm_call")
-    llm_graph.add_conditional_edges("llm_call", tools_condition)
+    llm_graph.add_conditional_edges("llm_call", _tools_condition_with_limit)
     llm_graph.add_edge("tools", "llm_call")
     llm_loop = llm_graph.compile()
+
+    def _safe_llm_loop(state: WorkerState) -> dict:
+        """Run the LLM loop with error recovery — failures produce a result instead of crashing."""
+        try:
+            return llm_loop.invoke(state)
+        except Exception as e:
+            logger.error("worker: llm_loop failed for %s: %s", state["task"]["id"], e)
+            return {"messages": [AIMessage(content=f"Task execution failed: {e}")]}
 
     # Full worker pipeline
     graph = StateGraph(WorkerState, output=WorkerOutput)
     graph.add_node("recon", worker_recon)
     graph.add_node("match_rules", worker_match_rules)
     graph.add_node("deepen_context", worker_deepen_context)
-    graph.add_node("llm_loop", llm_loop)
+    graph.add_node("llm_loop", _safe_llm_loop)
     graph.add_node("summarize", worker_summarize)
     graph.add_node("extract_memory", worker_extract_memory)
 
