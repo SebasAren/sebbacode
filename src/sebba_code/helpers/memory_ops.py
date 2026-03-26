@@ -79,16 +79,15 @@ def append_or_create(filepath: Path, content: str) -> None:
         filepath.write_text(content)
 
 
-def format_session_from_commits(
-    commit_files: list[Path], updates: dict
+def format_session_from_summaries(
+    summaries: list[dict], updates: dict
 ) -> str:
-    """Format a session summary from commits and extracted updates."""
+    """Format a session summary from todo summaries and extracted updates."""
     parts = [f"# Session Summary — {date.today().isoformat()}\n"]
 
-    parts.append("## Commits")
-    for f in commit_files:
-        first_line = f.read_text().split("\n", 1)[0]
-        parts.append(f"- {first_line}")
+    parts.append("## Completed Todos")
+    for s in summaries:
+        parts.append(f"- {s['summary']}")
 
     if updates.get("memory_updates"):
         parts.append("\n## Memory Updates")
@@ -101,15 +100,3 @@ def format_session_from_commits(
             parts.append(f"- {r['file']}")
 
     return "\n".join(parts)
-
-
-def remove_active_branch(explore_id: str) -> None:
-    """Remove an exploration from the Active Branches section of main.md."""
-    main_md = get_agent_dir() / "gcc" / "main.md"
-    if not main_md.exists():
-        return
-
-    content = main_md.read_text()
-    lines = content.split("\n")
-    filtered = [l for l in lines if explore_id not in l]
-    main_md.write_text("\n".join(filtered))

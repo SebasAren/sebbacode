@@ -13,7 +13,7 @@ logger = logging.getLogger("sebba_code")
 def read_roadmap(state: AgentState) -> dict:
     """Parse main.md, extract todos and target files, pick next todo."""
     logger.info("Reading roadmap from main.md")
-    main_md = get_agent_dir() / "gcc" / "main.md"
+    main_md = get_agent_dir() / "roadmap.md"
 
     if not main_md.exists():
         return {"roadmap": "", "current_todo": None, "target_files": []}

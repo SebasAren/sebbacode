@@ -10,7 +10,6 @@ from sebba_code.nodes.extract import (
     extract_session,
     finalize_todo,
     should_continue,
-    sync_progress,
 )
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
 from sebba_code.nodes.roadmap import has_todo, is_first_todo, read_roadmap
@@ -33,7 +32,6 @@ def build_agent_graph():
     graph.add_node("deepen_context", deepen_context)
     graph.add_node("execute_todo", build_execute_subgraph())
     graph.add_node("finalize_todo", finalize_todo)
-    graph.add_node("sync_progress", sync_progress)
     graph.add_node("extract_session", extract_session)
     graph.add_node("roadmap_done", roadmap_done)
 
@@ -69,8 +67,7 @@ def build_agent_graph():
 
     # Post-execution
     graph.add_edge("execute_todo", "finalize_todo")
-    graph.add_edge("finalize_todo", "sync_progress")
-    graph.add_edge("sync_progress", "extract_session")
+    graph.add_edge("finalize_todo", "extract_session")
     graph.add_conditional_edges(
         "extract_session",
         should_continue,

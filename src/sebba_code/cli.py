@@ -2,7 +2,6 @@
 
 import logging
 import re
-import subprocess
 from pathlib import Path
 
 import click
@@ -20,7 +19,7 @@ DEFAULT_PLANNING_MAX_ITERATIONS = 3
 @click.group()
 @click.option("--agent-dir", default=".agent", help="Path to .agent directory")
 def cli(agent_dir: str):
-    """LangGraph coding agent with git-native memory."""
+    """LangGraph coding agent with tiered memory."""
     init_agent_dir(Path(agent_dir))
 
 
@@ -50,7 +49,7 @@ def _configure_llm_from_config():
 
 def _get_next_todo() -> str | None:
     """Parse roadmap and return the first uncompleted todo, or None if all done."""
-    roadmap_path = get_agent_dir() / "gcc" / "main.md"
+    roadmap_path = get_agent_dir() / "roadmap.md"
     if not roadmap_path.exists():
         return None
 
@@ -84,7 +83,7 @@ def _get_next_todo() -> str | None:
 
 def _count_todos() -> tuple[int, int]:
     """Parse roadmap and return (completed, pending) todo counts."""
-    roadmap_path = get_agent_dir() / "gcc" / "main.md"
+    roadmap_path = get_agent_dir() / "roadmap.md"
     if not roadmap_path.exists():
         return 0, 0
 
@@ -95,7 +94,7 @@ def _count_todos() -> tuple[int, int]:
     pending = 0
     # Match checkbox lines: - [x] or - [ ] at start of line (with optional leading whitespace)
     pattern = re.compile(r"^\s*[-*]\s*\[([ x])\]")
-    
+
     for line in content.split("\n"):
         match = pattern.match(line)
         if match:
@@ -107,28 +106,14 @@ def _count_todos() -> tuple[int, int]:
     return completed, pending
 
 
-def _count_gcc_commits() -> int | None:
-    """Count total GCC commits in the repository. Returns None if not a git repo."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return int(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
-        return None
-
-
 def _list_memory_files() -> list[Path]:
     """Return sorted list of files in .agent/memory/ directory."""
     memory_dir = get_agent_dir() / "memory"
     if not memory_dir.exists():
         return []
     return sorted(
-        f.relative_to(memory_dir) 
-        for f in memory_dir.rglob("*") 
+        f.relative_to(memory_dir)
+        for f in memory_dir.rglob("*")
         if f.is_file()
     )
 
@@ -138,30 +123,20 @@ def status():
     """Print a summary of the current agent state."""
     # Todo counts
     completed, pending = _count_todos()
-    
-    # GCC commits
-    gcc_commits = _count_gcc_commits()
-    
+
     # Memory files
     memory_files = _list_memory_files()
 
     click.echo("=== Agent Status ===\n")
-    
+
     # Roadmap section
-    click.echo("Roadmap (.agent/gcc/main.md):")
+    click.echo("Roadmap (.agent/roadmap.md):")
     if completed == 0 and pending == 0:
         click.echo("  (no roadmap found)\n")
     else:
         click.echo(f"  Completed: {completed}")
         click.echo(f"  Pending:   {pending}\n")
-    
-    # GCC commits section
-    click.echo("GCC Commits:")
-    if gcc_commits is not None:
-        click.echo(f"  Total: {gcc_commits}\n")
-    else:
-        click.echo("  (not a git repository)\n")
-    
+
     # Memory files section
     click.echo("Memory Files (.agent/memory/):")
     if memory_files:
@@ -169,6 +144,15 @@ def status():
             click.echo(f"  {f}")
     else:
         click.echo("  (no memory files)")
+
+    # Archived roadmaps
+    archive_dir = get_agent_dir() / "roadmaps" / "archive"
+    if archive_dir.exists():
+        archives = sorted(archive_dir.glob("*.md"))
+        if archives:
+            click.echo(f"\nArchived Roadmaps ({len(archives)}):")
+            for a in archives:
+                click.echo(f"  {a.name}")
 
 
 @cli.command()
@@ -224,7 +208,7 @@ def run(verbose: bool, dry_run: bool, debug_prompts: bool, max_todos: int | None
 @click.option("--refine", is_flag=True, help="Use the planning loop for iterative refinement")
 def seed(title: str, description: str, labels: str, refine: bool):
     """Seed a roadmap from an issue description.
-    
+
     Use --refine to enable the planning loop for iterative draft-critique-refine
     before writing the final roadmap.
     """
@@ -241,7 +225,7 @@ def seed(title: str, description: str, labels: str, refine: bool):
     else:
         seed_roadmap_from_issue(title, description, labels, use_refine=False)
 
-    click.echo(f"Roadmap seeded at {get_agent_dir()}/gcc/main.md")
+    click.echo(f"Roadmap seeded at {get_agent_dir()}/roadmap.md")
 
 
 @cli.command()
@@ -249,7 +233,7 @@ def seed(title: str, description: str, labels: str, refine: bool):
 @click.option("--iterations", "-i", type=int, default=None, help="Override max planning iterations (default: from config)")
 def plan(description: str, iterations: int | None):
     """Generate a roadmap using the planning loop.
-    
+
     Takes a natural language description of what you want to build
     and transforms it into a structured, validated roadmap through
     an iterative draft-critique-refine cycle.
@@ -347,7 +331,7 @@ def plan(description: str, iterations: int | None):
             click.echo(f"Generated roadmap with {len(result['draft_roadmap'])} characters.")
 
     elapsed = time.monotonic() - start_time
-    click.echo(f"[{elapsed:.1f}s] Roadmap created at {get_agent_dir()}/gcc/main.md")
+    click.echo(f"[{elapsed:.1f}s] Roadmap created at {get_agent_dir()}/roadmap.md")
 
 
 if __name__ == "__main__":

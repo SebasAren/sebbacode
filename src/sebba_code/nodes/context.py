@@ -13,7 +13,7 @@ logger = logging.getLogger("sebba_code")
 
 
 def deepen_context(state: AgentState) -> dict:
-    """LLM picks relevant L1/L2 memory. Also loads latest GCC commit (K=1)."""
+    """LLM picks relevant L1/L2 memory. Also loads session history from state."""
     logger.info("Deepening context with L1/L2 memory and session history")
     agent_dir = get_agent_dir()
     memory = state["memory"]
@@ -54,17 +54,21 @@ Return a JSON list of relative paths to load. Be selective.
                         key = str(l2_file.relative_to(agent_dir / "memory"))
                         l2_files[key] = l2_file.read_text()
 
-    # Load latest GCC commit for session continuity (K=1)
+    # Build session history from previous todo summaries in state
     session_history = ""
-    commits_dir = agent_dir / "gcc" / "commits"
-    if commits_dir.exists():
-        commits = sorted(commits_dir.glob("*.md"))
-        if commits:
-            session_history = commits[-1].read_text()
+    summaries = state.get("todo_summaries", [])
+    if summaries:
+        last = summaries[-1]
+        session_history = (
+            f"## Previous Todo: {last['summary']}\n\n"
+            f"### What was done\n{last['what_i_did']}\n"
+        )
+        if last.get("decisions_made"):
+            session_history += f"\n### Decisions Made\n{last['decisions_made']}\n"
 
     # Load branch context if on a feature branch
     branch = state.get("working_branch", "main")
-    branch_dir = agent_dir / "gcc" / "branches" / branch
+    branch_dir = agent_dir / "branches" / branch
     if branch_dir.exists() and (branch_dir / "context.md").exists():
         session_history += "\n\n" + (branch_dir / "context.md").read_text()
 

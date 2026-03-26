@@ -24,9 +24,9 @@ mypy src/sebba_code/
 
 ## Architecture
 
-sebba-code is a **LangGraph coding agent** that executes a roadmap of tasks from `.agent/gcc/main.md`, using LLM-guided tool calls. It persists knowledge across sessions via git-native tiered memory.
+sebba-code is a **LangGraph coding agent** that executes a roadmap of tasks from `.agent/roadmap.md`, using LLM-guided tool calls. It persists knowledge across sessions via tiered memory.
 
-### Graph Flow (10 nodes)
+### Graph Flow (11 nodes)
 
 Defined in `src/sebba_code/graph.py`:
 
@@ -39,13 +39,15 @@ START → load_context → [needs_bootstrap?]
       yes → explore_validate → explore_recon
       no  → explore_recon
     → match_rules → deepen_context → execute_todo (subgraph)
-    → extract_session → [should_continue?]
+    → finalize_todo → extract_session → [should_continue?]
       yes → read_roadmap (loop)
       no  → END
 ```
 
 - **execute_todo** is a subgraph with an inner LLM+tools loop (max 50 tool calls per todo)
-- **extract_session** distills commits into lasting memory/decisions/rules
+- **finalize_todo** marks the todo done in the roadmap and creates a summary in LangGraph state
+- **extract_session** distills todo summaries from state into lasting memory/rules
+- **roadmap_done** archives the completed roadmap to `.agent/roadmaps/archive/`
 - Session processes up to 5 todos before stopping
 
 ### Tiered Memory System
@@ -57,15 +59,15 @@ All memory lives under `.agent/memory/`:
 
 ### Key Concepts
 
-- **Roadmap**: Markdown file at `.agent/gcc/main.md` with `- [ ] todo` items driving execution
-- **GCC Commits**: Structured progress logs in `.agent/gcc/commits/` (not git commits)
+- **Roadmap**: Markdown file at `.agent/roadmap.md` with `- [ ] todo` items driving execution. Completed roadmaps are archived to `.agent/roadmaps/archive/`.
+- **Todo summaries**: Per-todo progress summaries stored in LangGraph state (not files), created by `finalize_todo` via cheap LLM summarization of the message history.
 - **Path-scoped rules**: Files in `.agent/rules/` with YAML frontmatter `paths:` globs — matched against target files in `match_rules` node
-- **Exploration via worktrees**: `gcc_explore` creates git worktrees for parallel experimentation; `gcc_adopt` merges the winner
+- **Exploration via worktrees**: `explore` creates git worktrees for parallel experimentation; `adopt` merges the winner. Branch context stored in `.agent/branches/`.
 
 ### Source Layout
 
 - `src/sebba_code/nodes/` — Graph node functions (context loading, exploration, execution, extraction)
-- `src/sebba_code/tools/` — 12 LLM-callable tools (file I/O, shell, progress tracking, exploration, memory query)
+- `src/sebba_code/tools/` — 11 LLM-callable tools (file I/O, shell, progress tracking, exploration, memory query)
 - `src/sebba_code/helpers/` — Utilities for git, markdown manipulation, memory ops, rule parsing
 
 ## Configuration

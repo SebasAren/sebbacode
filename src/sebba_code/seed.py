@@ -13,7 +13,7 @@ def seed_roadmap_from_issue(
     milestone: str = "",
     use_refine: bool = False,
 ) -> None:
-    """Generate a roadmap main.md from an issue description.
+    """Generate a roadmap from an issue description.
 
     Args:
         issue_title: Title of the issue/task
@@ -36,8 +36,6 @@ def _seed_with_single_call(
     milestone: str = "",
 ) -> None:
     """Original one-shot LLM call implementation."""
-    agent_dir = get_agent_dir()
-
     seed_prompt = f"""Decompose this issue into an agent roadmap.
 
 Issue: {issue_title}
@@ -51,7 +49,6 @@ Generate a markdown document with these sections:
 - Context: where this came from, current state of the codebase
 - Todos: ordered, actionable steps (each completable in one session)
 - Target Files: best guess at files to create or modify
-- Active Branches: (start empty)
 - Decisions Made: (start empty)
 - Constraints: non-functional requirements, things to preserve
 
@@ -62,7 +59,6 @@ Keep todos concrete and specific.
     response = llm.invoke(seed_prompt)
 
     _write_roadmap(response.content)
-    _ensure_gcc_subdirs()
 
 
 def _seed_with_planning_loop(
@@ -137,7 +133,6 @@ def _seed_with_planning_loop(
         if complete == "yes":
             # Write the final roadmap
             write_roadmap(state)
-            _ensure_gcc_subdirs()
             return
 
         # Refine phase - loop back to critique
@@ -167,18 +162,10 @@ def _build_user_request(
 
 
 def _write_roadmap(content: str) -> None:
-    """Write roadmap content to the gcc/main.md file."""
+    """Write roadmap content to .agent/roadmap.md."""
     agent_dir = get_agent_dir()
-    gcc_dir = agent_dir / "gcc"
-    gcc_dir.mkdir(parents=True, exist_ok=True)
-    (gcc_dir / "main.md").write_text(content)
-
-
-def _ensure_gcc_subdirs() -> None:
-    """Ensure gcc subdirectories exist."""
-    agent_dir = get_agent_dir()
-    (agent_dir / "gcc" / "commits").mkdir(exist_ok=True)
-    (agent_dir / "gcc" / "branches").mkdir(exist_ok=True)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "roadmap.md").write_text(content)
 
 
 def init_agent_structure() -> None:
@@ -188,9 +175,8 @@ def init_agent_structure() -> None:
     dirs = [
         agent_dir / "memory",
         agent_dir / "rules",
-        agent_dir / "gcc",
-        agent_dir / "gcc" / "commits",
-        agent_dir / "gcc" / "branches",
+        agent_dir / "branches",
+        agent_dir / "roadmaps" / "archive",
         agent_dir / "sessions",
     ]
     for d in dirs:
@@ -219,11 +205,6 @@ loading:
   l1_max_tokens: 2000
   l2_max_tokens: 4000
   max_total_context: 12000
-
-gcc:
-  max_main_md_lines: 60
-  k: 1
-  archive_on_complete: true
 
 explorer:
   bootstrap_on_empty: true

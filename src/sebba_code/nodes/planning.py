@@ -235,7 +235,7 @@ def refine_roadmap(state: AgentState, configurable: dict | None = None) -> dict:
 
 
 def write_roadmap(state: AgentState) -> dict:
-    """Persist the finalized draft to .agent/gcc/main.md.
+    """Persist the finalized draft to .agent/roadmap.md.
 
     Called only after planning_complete is True.
     """
@@ -244,7 +244,7 @@ def write_roadmap(state: AgentState) -> dict:
         logger.warning("No draft roadmap to write")
         return {}
 
-    roadmap_path = get_agent_dir() / "gcc" / "main.md"
+    roadmap_path = get_agent_dir() / "roadmap.md"
     roadmap_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(roadmap_path, "w") as f:

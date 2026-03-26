@@ -1,49 +1,9 @@
-"""Implements GCC commit, todo management, and roadmap tools for progress tracking."""
-
-from datetime import datetime
+"""Implements todo management and roadmap tools for progress tracking."""
 
 from langchain_core.tools import tool
 
 from sebba_code.constants import get_agent_dir
 from sebba_code.helpers.markdown import append_to_section
-
-
-@tool
-def gcc_commit(
-    summary: str,
-    what_i_did: str,
-    decisions_made: str = "",
-    issues_encountered: str = "",
-    files_touched: str = "",
-) -> str:
-    """Log structured progress. Call after completing a meaningful unit of work.
-
-    Args:
-        summary: One-line summary
-        what_i_did: Bullet list of actions taken
-        decisions_made: Any choices made and why
-        issues_encountered: Problems hit and how resolved
-        files_touched: Files created/modified with brief notes
-    """
-    commits_dir = get_agent_dir() / "gcc" / "commits"
-    commits_dir.mkdir(parents=True, exist_ok=True)
-
-    num = len(list(commits_dir.glob("*.md"))) + 1
-
-    content = (
-        f"# Commit {num:03d}: {summary}\n"
-        f"**Date**: {datetime.now().isoformat()}\n\n"
-        f"## What I Did\n{what_i_did}\n"
-    )
-    if decisions_made:
-        content += f"\n## Decisions Made\n{decisions_made}\n"
-    if issues_encountered:
-        content += f"\n## Issues Encountered\n{issues_encountered}\n"
-    if files_touched:
-        content += f"\n## Files Touched\n{files_touched}\n"
-
-    (commits_dir / f"{num:03d}.md").write_text(content)
-    return f"Committed {num:03d}: {summary}"
 
 
 @tool
@@ -56,7 +16,7 @@ def mark_todo_done(todo_text: str, notes: str = "") -> str:
     """
     import re
 
-    main_md = get_agent_dir() / "gcc" / "main.md"
+    main_md = get_agent_dir() / "roadmap.md"
     content = main_md.read_text()
     suffix = f" → {notes}" if notes else ""
 
@@ -107,7 +67,7 @@ def add_todo(todo_text: str, after: str = "") -> str:
         todo_text: The new todo text (must not duplicate an existing todo)
         after: Optional text of an existing todo to insert after
     """
-    main_md = get_agent_dir() / "gcc" / "main.md"
+    main_md = get_agent_dir() / "roadmap.md"
     content = main_md.read_text()
 
     # Reject if a similar todo already exists
@@ -140,7 +100,7 @@ def discover_files(files: list[str]) -> str:
     Args:
         files: List of file paths to add to the target files section
     """
-    main_md = get_agent_dir() / "gcc" / "main.md"
+    main_md = get_agent_dir() / "roadmap.md"
     content = main_md.read_text()
     added = 0
     for f in files:

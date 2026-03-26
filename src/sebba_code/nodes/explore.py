@@ -192,7 +192,7 @@ Only flag real problems, not theoretical ones.
     result = parse_json(response.content)
 
     # Apply corrections to main.md
-    main_md = agent_dir / "gcc" / "main.md"
+    main_md = agent_dir / "roadmap.md"
     content = main_md.read_text()
 
     # Collect existing todo text (lowercased) to prevent semantic duplicates

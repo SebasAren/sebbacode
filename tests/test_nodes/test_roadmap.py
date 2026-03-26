@@ -15,7 +15,7 @@ class TestReadRoadmap:
         assert "src/utils.ts" in result["target_files"]
 
     def test_no_roadmap(self, tmp_agent_dir):
-        (tmp_agent_dir / "gcc" / "main.md").unlink()
+        (tmp_agent_dir / "roadmap.md").unlink()
         result = read_roadmap({})
         assert result["current_todo"] is None
         assert result["target_files"] == []

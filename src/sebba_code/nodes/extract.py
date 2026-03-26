@@ -1,8 +1,6 @@
 """Implements post-execution finalization and session extraction nodes."""
 
 import logging
-import re
-from datetime import datetime
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -13,11 +11,11 @@ from sebba_code.helpers.memory_ops import (
     apply_index_updates,
     apply_memory_updates,
     apply_new_rules,
-    format_session_from_commits,
+    format_session_from_summaries,
 )
 from sebba_code.helpers.parsing import parse_json
 from sebba_code.llm import get_cheap_llm, get_llm
-from sebba_code.state import AgentState
+from sebba_code.state import AgentState, TodoSummary
 
 
 logger = logging.getLogger("sebba_code")
@@ -50,7 +48,7 @@ def _format_messages_for_summary(messages: list, max_chars: int = 4000) -> str:
 
 
 def finalize_todo(state: AgentState) -> dict:
-    """Deterministically mark the current todo as done and create a GCC commit.
+    """Mark the current todo as done and create a summary in state.
 
     Runs after execute_todo to ensure progress is always recorded,
     regardless of whether the LLM called the tools itself.
@@ -63,30 +61,27 @@ def finalize_todo(state: AgentState) -> dict:
     agent_dir = get_agent_dir()
     logger.info("Finalizing todo: %s", todo_text)
 
-    # --- A) Auto-mark todo done (idempotent) ---
-    main_md = agent_dir / "gcc" / "main.md"
-    if main_md.exists():
-        content = main_md.read_text()
+    # --- A) Auto-mark todo done in roadmap (idempotent) ---
+    roadmap_path = agent_dir / "roadmap.md"
+    roadmap_content = ""
+    if roadmap_path.exists():
+        content = roadmap_path.read_text()
         if f"- [x] ~~{todo_text}~~" not in content:
             old = f"- [ ] {todo_text}"
             if old in content:
                 content = content.replace(old, f"- [x] ~~{todo_text}~~", 1)
-                main_md.write_text(content)
+                roadmap_path.write_text(content)
                 logger.info("Auto-marked todo done: %s", todo_text)
+        roadmap_content = roadmap_path.read_text()
 
-    # --- B) Auto-create GCC commit ---
-    commits_dir = agent_dir / "gcc" / "commits"
-    commits_dir.mkdir(parents=True, exist_ok=True)
-    num = len(list(commits_dir.glob("*.md"))) + 1
-
-    messages = state.get("messages", [])
-    formatted = _format_messages_for_summary(messages)
-
-    # Summarize via cheap LLM, with fallback
+    # --- B) Create TodoSummary via cheap LLM ---
     summary_text = todo_text
     what_i_did = f"- Completed: {todo_text}"
     decisions_made = ""
     files_touched = ""
+
+    messages = state.get("messages", [])
+    formatted = _format_messages_for_summary(messages)
 
     if formatted:
         try:
@@ -110,73 +105,50 @@ def finalize_todo(state: AgentState) -> dict:
         except Exception:
             logger.warning("Auto-commit summary failed, using fallback", exc_info=True)
 
-    commit_content = (
-        f"# Commit {num:03d}: {summary_text}\n"
-        f"**Date**: {datetime.now().isoformat()}\n\n"
-        f"## What I Did\n{what_i_did}\n"
-    )
-    if decisions_made:
-        commit_content += f"\n## Decisions Made\n{decisions_made}\n"
-    if files_touched:
-        commit_content += f"\n## Files Touched\n{files_touched}\n"
+    new_summary: TodoSummary = {
+        "todo_text": todo_text,
+        "summary": summary_text,
+        "what_i_did": what_i_did,
+        "decisions_made": decisions_made,
+        "files_touched": files_touched,
+    }
 
-    (commits_dir / f"{num:03d}.md").write_text(commit_content)
-    logger.info("Auto-created GCC commit %03d", num)
+    existing_summaries = list(state.get("todo_summaries", []))
+    existing_completed = list(state.get("todos_completed_this_session", []))
 
-    return {}
-
-
-def sync_progress(state: AgentState) -> dict:
-    """Sync state with on-disk roadmap changes made by tools during execution.
-
-    Tools like mark_todo_done modify the filesystem but can't update graph state.
-    This node bridges that gap by diffing the roadmap before/after execution.
-    """
-    logger.info("Syncing progress from roadmap")
-    agent_dir = get_agent_dir()
-    main_md = agent_dir / "gcc" / "main.md"
-
-    if not main_md.exists():
-        return {}
-
-    roadmap = main_md.read_text()
-    previous_roadmap = state.get("roadmap", "")
-
-    # Find todos that are now [x] but weren't before
-    newly_completed = []
-    for match in re.finditer(r"- \[x\] ~~(.+?)~~", roadmap):
-        todo_text = match.group(1).strip()
-        # Check this wasn't already completed in the previous roadmap snapshot
-        if f"- [x] ~~{todo_text}~~" not in previous_roadmap:
-            newly_completed.append(todo_text)
-
-    previous = list(state.get("todos_completed_this_session", []))
     return {
-        "todos_completed_this_session": previous + newly_completed,
-        "roadmap": roadmap,
+        "todo_summaries": existing_summaries + [new_summary],
+        "todos_completed_this_session": existing_completed + [todo_text],
+        "roadmap": roadmap_content,
     }
 
 
 def extract_session(state: AgentState) -> dict:
-    """Read GCC commits from this session, distill into lasting memory."""
-    logger.info("Extracting session commits into lasting memory")
+    """Read todo summaries from state, distill into lasting memory."""
+    logger.info("Extracting session activity into lasting memory")
     agent_dir = get_agent_dir()
-    commits_dir = agent_dir / "gcc" / "commits"
-    start = state.get("session_start_commit", 0)
-    all_commits = sorted(commits_dir.glob("*.md")) if commits_dir.exists() else []
-    session_commits = all_commits[start:]
+    summaries = state.get("todo_summaries", [])
 
-    if not session_commits:
+    if not summaries:
         return {}
 
-    combined = "\n\n---\n\n".join(f.read_text() for f in session_commits)
+    # Format summaries into text for the extraction LLM
+    parts = []
+    for i, s in enumerate(summaries, 1):
+        part = f"## Todo {i}: {s['summary']}\n\n### What was done\n{s['what_i_did']}\n"
+        if s.get("decisions_made"):
+            part += f"\n### Decisions Made\n{s['decisions_made']}\n"
+        if s.get("files_touched"):
+            part += f"\n### Files Touched\n{s['files_touched']}\n"
+        parts.append(part)
+    combined = "\n\n---\n\n".join(parts)
 
     memory_inventory = summarize_memory_files(agent_dir / "memory")
     rules_inventory = summarize_rules(agent_dir / "rules")
 
-    extraction_prompt = f"""Read these session commits and extract lasting knowledge.
+    extraction_prompt = f"""Read this session activity and extract lasting knowledge.
 
-## Session Commits
+## Session Activity
 {combined}
 
 ## Current Memory Index
@@ -241,11 +213,11 @@ Rules vs memory:
 
     session_file = agent_dir / "sessions" / f"{date.today().isoformat()}.md"
     append_or_create(
-        session_file, format_session_from_commits(session_commits, updates)
+        session_file, format_session_from_summaries(summaries, updates)
     )
 
-    # Advance the commit pointer so we don't re-extract on the next loop iteration
-    return {"session_start_commit": len(all_commits)}
+    # Clear summaries for next loop iteration
+    return {"todo_summaries": []}
 
 
 def should_continue(state: AgentState) -> str:

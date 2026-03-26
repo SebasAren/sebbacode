@@ -21,15 +21,6 @@ class RulesConfig:
 
 
 @dataclass
-class GCCConfig:
-    max_main_md_lines: int = 60
-    k: int = 1
-    archive_on_complete: bool = True
-    worktrees_dir: str = ".agent/worktrees"
-    cleanup_worktrees_on_adopt: bool = True
-
-
-@dataclass
 class ExplorerConfig:
     bootstrap_on_empty: bool = True
     validate_new_roadmaps: bool = True
@@ -99,7 +90,6 @@ class LLMConfig:
 class AgentConfig:
     loading: LoadingConfig = field(default_factory=LoadingConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
-    gcc: GCCConfig = field(default_factory=GCCConfig)
     explorer: ExplorerConfig = field(default_factory=ExplorerConfig)
     sessions: SessionsConfig = field(default_factory=SessionsConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
@@ -121,7 +111,6 @@ def load_config(agent_dir: Path) -> AgentConfig:
     for section_name, section_cls in [
         ("loading", LoadingConfig),
         ("rules", RulesConfig),
-        ("gcc", GCCConfig),
         ("explorer", ExplorerConfig),
         ("sessions", SessionsConfig),
         ("retrieval", RetrievalConfig),

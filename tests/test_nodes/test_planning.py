@@ -32,8 +32,8 @@ def _make_state(**overrides) -> dict:
             "session_history": "",
         },
         "working_branch": None,
-        "session_start_commit": 0,
         "todos_completed_this_session": [],
+        "todo_summaries": [],
         "max_todos": None,
         "user_request": "Build auth system",
         "draft_roadmap": "",
@@ -380,7 +380,7 @@ class TestFilePersistence:
     """Tests for write_roadmap file output."""
 
     def test_write_roadmap_creates_file(self, tmp_agent_dir):
-        """write_roadmap should create .agent/gcc/main.md."""
+        """write_roadmap should create .agent/roadmap.md."""
         draft = """## Goal
 Build auth.
 
@@ -393,7 +393,7 @@ Build auth.
         state = _make_state(draft_roadmap=draft)
         write_roadmap(state)
 
-        roadmap_path = tmp_agent_dir / "gcc" / "main.md"
+        roadmap_path = tmp_agent_dir / "roadmap.md"
         assert roadmap_path.exists()
 
     def test_write_roadmap_contains_draft_content(self, tmp_agent_dir):
@@ -402,7 +402,7 @@ Build auth.
         state = _make_state(draft_roadmap=draft)
         write_roadmap(state)
 
-        roadmap_path = tmp_agent_dir / "gcc" / "main.md"
+        roadmap_path = tmp_agent_dir / "roadmap.md"
         content = roadmap_path.read_text()
         assert "Auth system" in content
         assert "- [ ] Login" in content
@@ -418,17 +418,16 @@ Build auth.
 
     def test_write_roadmap_creates_parent_directories(self, tmp_agent_dir):
         """write_roadmap should create parent directories if needed."""
-        import shutil
-
-        # Remove the gcc directory and its contents
-        gcc_dir = tmp_agent_dir / "gcc"
-        shutil.rmtree(gcc_dir)
+        # Remove the roadmap file
+        roadmap = tmp_agent_dir / "roadmap.md"
+        if roadmap.exists():
+            roadmap.unlink()
 
         draft = "## Goal\nTest.\n\n## Todos\n- [ ] Task\n"
         state = _make_state(draft_roadmap=draft)
         write_roadmap(state)
 
-        assert (tmp_agent_dir / "gcc" / "main.md").exists()
+        assert (tmp_agent_dir / "roadmap.md").exists()
 
     def test_write_roadmap_handles_empty_draft(self, tmp_agent_dir):
         """write_roadmap should handle empty draft gracefully."""
@@ -448,7 +447,7 @@ Build auth.
         draft2 = "## Goal\nSecond.\n\n## Todos\n- [ ] Task 2\n"
         write_roadmap(_make_state(draft_roadmap=draft2))
 
-        roadmap_path = tmp_agent_dir / "gcc" / "main.md"
+        roadmap_path = tmp_agent_dir / "roadmap.md"
         content = roadmap_path.read_text()
 
         assert "Second" in content

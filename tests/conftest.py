@@ -38,10 +38,8 @@ def tmp_agent_dir(tmp_path: Path) -> Path:
         "# Testing Rules\n\n- Use vitest\n"
     )
 
-    # GCC
-    gcc_dir = agent_dir / "gcc"
-    gcc_dir.mkdir()
-    (gcc_dir / "main.md").write_text(
+    # Roadmap
+    (agent_dir / "roadmap.md").write_text(
         "# Test Roadmap\n\n"
         "## Goal\nTest the agent.\n\n"
         "## Todos\n"
@@ -50,12 +48,15 @@ def tmp_agent_dir(tmp_path: Path) -> Path:
         "## Target Files\n"
         "- src/app.ts\n"
         "- src/utils.ts\n\n"
-        "## Active Branches\nNone.\n\n"
         "## Decisions Made\nNone.\n\n"
         "## Constraints\n- Must work\n"
     )
-    (gcc_dir / "commits").mkdir()
-    (gcc_dir / "branches").mkdir()
+
+    # Branches (for exploration)
+    (agent_dir / "branches").mkdir()
+
+    # Roadmap archive
+    (agent_dir / "roadmaps" / "archive").mkdir(parents=True)
 
     # Sessions
     (agent_dir / "sessions").mkdir()

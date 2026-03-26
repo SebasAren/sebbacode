@@ -24,6 +24,16 @@ class TodoItem(TypedDict):
     index: int
 
 
+class TodoSummary(TypedDict):
+    """Summary of a completed todo, stored in state instead of commit files."""
+
+    todo_text: str
+    summary: str
+    what_i_did: str
+    decisions_made: str
+    files_touched: str
+
+
 class PlanState(TypedDict):
     """State for the planning-only graph."""
 
@@ -58,12 +68,12 @@ class AgentState(TypedDict):
     # Memory
     memory: AgentMemoryContext
 
-    # Git/GCC
+    # Git
     working_branch: Optional[str]
-    session_start_commit: int
 
     # Session tracking
     todos_completed_this_session: list[str]
+    todo_summaries: list[TodoSummary]
 
     # Configurable limits
     max_todos: Optional[int]  # None = use default from constants
