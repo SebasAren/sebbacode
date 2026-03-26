@@ -12,13 +12,67 @@ from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
 from sebba_code.helpers.files import is_relevant, list_available_files, summarize_memory_files, summarize_rules
 from sebba_code.helpers.markdown import summarise_file
 from sebba_code.helpers.memory_ops import format_session_from_summaries
-from sebba_code.helpers.parsing import format_dict, parse_json, parse_json_list
+from pydantic import BaseModel
+
+from sebba_code.helpers.parsing import format_dict, parse_json_list
 from sebba_code.llm import get_cheap_llm, get_llm, invoke_with_timeout
 from sebba_code.state import TaskResult, WorkerOutput, WorkerState
 from sebba_code.tools import get_worker_tools
 
 logger = logging.getLogger("sebba_code")
 debug_logger = logging.getLogger("sebba_code.debug")
+
+
+# -- Structured output models for cheap LLM calls --
+
+
+class TaskSummaryResult(BaseModel):
+    """Structured output for task summarization."""
+
+    summary: str
+    what_i_did: str
+    decisions_made: str = ""
+    files_touched: str = ""
+
+
+class CommitClassification(BaseModel):
+    """Structured output for conventional commit classification."""
+
+    type: str  # feat | fix | docs | refactor | test | chore
+    scope: str = ""
+    description: str
+
+
+class MemoryUpdate(BaseModel):
+    """A single memory file update."""
+
+    file: str
+    action: str  # create | append | replace_section
+    section: str = ""
+    content: str
+
+
+class IndexUpdate(BaseModel):
+    """A single memory index update."""
+
+    old_line: str | None = None
+    new_line: str
+
+
+class NewRule(BaseModel):
+    """A new path-scoped rule."""
+
+    file: str
+    paths: list[str]
+    content: str
+
+
+class ExtractionResult(BaseModel):
+    """Structured output for per-task memory extraction."""
+
+    memory_updates: list[MemoryUpdate] = []
+    index_updates: list[IndexUpdate] = []
+    new_rules: list[NewRule] = []
 
 
 def _get_max_tool_calls() -> int:
@@ -429,9 +483,9 @@ def worker_summarize(state: WorkerState) -> dict:
                 f' "files_touched": "comma-separated files modified (or empty string)"}}'
             )
             logger.info("worker_summarize: calling cheap LLM for task %s", task["id"])
-            response = invoke_with_timeout(get_cheap_llm(), prompt, timeout_seconds=45)
+            llm = get_cheap_llm().with_structured_output(TaskSummaryResult)
+            result = invoke_with_timeout(llm, prompt, timeout_seconds=45)
             logger.info("worker_summarize: LLM responded for task %s", task["id"])
-            result = parse_json(response.content)
             if result:
                 summary_text = result.get("summary", summary_text)
                 what_i_did = result.get("what_i_did", what_i_did)
@@ -521,8 +575,8 @@ def worker_commit_changes(state: WorkerState) -> dict:
             f'Respond with JSON: {{"type": "feat|fix|docs|refactor|test|chore", '
             f'"scope": "optional short scope", "description": "imperative mood, under 72 chars"}}'
         )
-        response = invoke_with_timeout(get_cheap_llm(), prompt)
-        commit_info = parse_json(response.content)
+        llm = get_cheap_llm().with_structured_output(CommitClassification)
+        commit_info = invoke_with_timeout(llm, prompt)
     except Exception:
         logger.warning("worker_commit: LLM commit message generation failed, using fallback")
         commit_info = None
@@ -616,11 +670,10 @@ Rules:
 """
 
     try:
-        llm = get_cheap_llm()
+        llm = get_cheap_llm().with_structured_output(ExtractionResult)
         logger.info("worker_extract_memory: calling cheap LLM for task %s", task["id"])
-        response = invoke_with_timeout(llm, extraction_prompt)
+        updates = invoke_with_timeout(llm, extraction_prompt)
         logger.info("worker_extract_memory: LLM responded for task %s", task["id"])
-        updates = parse_json(response.content)
     except TimeoutError:
         logger.warning("Task %s memory extraction LLM call timed out", task["id"])
         updates = {}

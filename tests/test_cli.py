@@ -2,11 +2,12 @@
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from sebba_code.cli import cli
+from sebba_code.cli import cli, _has_source_files
 
 
 class TestInitCommand:
@@ -278,3 +279,284 @@ class TestCliGroup:
             result = runner.invoke(cli, ["init", "--help"])
 
             assert result.exit_code == 0
+
+
+class TestHasSourceFiles:
+    """Tests for the _has_source_files helper function."""
+
+    def test_returns_false_for_empty_directory(self, tmp_path):
+        """Test that empty directory returns False."""
+        assert _has_source_files(tmp_path) is False
+
+    def test_returns_true_for_python_file(self, tmp_path):
+        """Test that Python files are detected."""
+        (tmp_path / "main.py").write_text("print('hello')")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_javascript_file(self, tmp_path):
+        """Test that JavaScript files are detected."""
+        (tmp_path / "index.js").write_text("console.log('hello')")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_typescript_file(self, tmp_path):
+        """Test that TypeScript files are detected."""
+        (tmp_path / "app.ts").write_text("const x: number = 1;")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_yaml_file(self, tmp_path):
+        """Test that YAML config files are detected."""
+        (tmp_path / "config.yaml").write_text("key: value")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_json_file(self, tmp_path):
+        """Test that JSON files are detected."""
+        (tmp_path / "package.json").write_text('{"name": "test"}')
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_markdown_file(self, tmp_path):
+        """Test that Markdown files are detected."""
+        (tmp_path / "README.md").write_text("# Title")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_makefile(self, tmp_path):
+        """Test that Makefile is detected."""
+        (tmp_path / "Makefile").write_text("all:\n\tmake build")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_dockerfile(self, tmp_path):
+        """Test that Dockerfile is detected."""
+        (tmp_path / "Dockerfile").write_text("FROM python:3.9")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_false_for_binary_files(self, tmp_path):
+        """Test that binary files are ignored."""
+        (tmp_path / "image.png").write_bytes(b"\x89PNG\r\n")
+        assert _has_source_files(tmp_path) is False
+
+    def test_returns_false_for_git_directory(self, tmp_path):
+        """Test that files in .git are ignored."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text("test")
+        assert _has_source_files(tmp_path) is False
+
+    def test_returns_false_for_venv_directory(self, tmp_path):
+        """Test that files in venv are ignored."""
+        venv_dir = tmp_path / "venv" / "lib"
+        venv_dir.mkdir(parents=True)
+        (venv_dir / "module.py").write_text("test")
+        assert _has_source_files(tmp_path) is False
+
+    def test_returns_false_for_node_modules(self, tmp_path):
+        """Test that files in node_modules are ignored."""
+        node_modules_dir = tmp_path / "node_modules" / "package"
+        node_modules_dir.mkdir(parents=True)
+        (node_modules_dir / "index.js").write_text("test")
+        assert _has_source_files(tmp_path) is False
+
+    def test_returns_true_for_nested_source_files(self, tmp_path):
+        """Test that nested source files are detected."""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "main.py").write_text("print('hello')")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_go_files(self, tmp_path):
+        """Test that Go files are detected."""
+        (tmp_path / "main.go").write_text("package main")
+        assert _has_source_files(tmp_path) is True
+
+    def test_returns_true_for_rust_files(self, tmp_path):
+        """Test that Rust files are detected."""
+        (tmp_path / "main.rs").write_text("fn main() {}")
+        assert _has_source_files(tmp_path) is True
+
+
+class TestInitCommandExploration:
+    """Tests for init command exploration functionality."""
+
+    @pytest.fixture
+    def runner(self):
+        """Create a CliRunner instance for testing."""
+        return CliRunner()
+
+    def test_init_with_skip_exploration_flag(self, runner, tmp_path):
+        """Test that --skip-exploration prevents exploration."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Create source files inside the isolated filesystem
+            Path("main.py").write_text("print('hello')")
+            
+            result = runner.invoke(cli, ["init", "--skip-exploration"])
+            
+            assert result.exit_code == 0
+            # Exploration file should not be created
+            exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+            assert not exploration_file.exists()
+
+    def test_init_exploration_file_not_created_in_empty_dir(self, runner, tmp_path):
+        """Test that exploration is skipped for empty directories."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init"])
+            
+            assert result.exit_code == 0
+            # Exploration file should not be created for empty dirs
+            exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+            assert not exploration_file.exists()
+
+    def test_init_exploration_with_source_files(self, runner, tmp_path):
+        """Test that exploration is performed when source files exist."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Create source files inside the isolated filesystem
+            Path("main.py").write_text("print('hello')")
+            Path("utils.py").write_text("def helper(): pass")
+            
+            # Mock the explore_codebase function to avoid actual LLM calls
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "Mocked exploration result"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                assert result.exit_code == 0
+                # Verify exploration was attempted
+                mock_explore.assert_called_once()
+                
+                # Check exploration file was created
+                exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+                assert exploration_file.exists()
+                content = exploration_file.read_text()
+                assert "Project Structure Exploration" in content
+                assert "Mocked exploration result" in content
+
+    def test_init_exploration_failure_handled_gracefully(self, runner, tmp_path):
+        """Test that exploration failures don't crash init."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Create source files inside the isolated filesystem
+            Path("main.py").write_text("print('hello')")
+            
+            # Mock explore_codebase to raise an exception
+            with patch("sebba_code.tools.explore_agent.explore_codebase", side_effect=Exception("LLM unavailable")):
+                result = runner.invoke(cli, ["init"])
+                
+                # Init should still succeed despite exploration failure
+                assert result.exit_code == 0
+                # Should contain warning about exploration failure
+                assert "Warning" in result.output or "warning" in result.output.lower()
+                # Basic structure should still be created
+                assert Path(".agent/config.yaml").exists()
+
+    def test_init_shows_skipping_message_for_empty_dir(self, runner, tmp_path):
+        """Test that init shows message when skipping exploration for empty dirs."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init"])
+            
+            assert result.exit_code == 0
+            # Should show skipping message (empty dirs skip exploration)
+            assert "Skipping exploration" in result.output or "no source files" in result.output.lower()
+
+    def test_init_exploration_output_contains_timestamp(self, runner, tmp_path):
+        """Test that exploration results include timestamp."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("main.py").write_text("print('hello')")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "Test findings"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+                content = exploration_file.read_text()
+                assert "Explored at:" in content
+
+    def test_init_exploration_output_contains_question(self, runner, tmp_path):
+        """Test that exploration results include the question asked."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("main.py").write_text("print('hello')")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "Test findings"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+                content = exploration_file.read_text()
+                assert "## Question" in content
+
+    def test_init_exploration_output_contains_findings(self, runner, tmp_path):
+        """Test that exploration results include the findings."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("main.py").write_text("print('hello')")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "The codebase has a simple structure with main.py"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+                content = exploration_file.read_text()
+                assert "## Findings" in content
+                assert "The codebase has a simple structure with main.py" in content
+
+    def test_init_help_shows_skip_exploration_option(self, runner, tmp_path):
+        """Test that --help shows the --skip-exploration option."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init", "--help"])
+            
+            assert result.exit_code == 0
+            assert "--skip-exploration" in result.output
+
+    def test_init_preserves_existing_exploration_file(self, runner, tmp_path):
+        """Test that re-running init preserves existing exploration file."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("main.py").write_text("print('hello')")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "First exploration"
+                
+                result1 = runner.invoke(cli, ["init"])
+                assert result1.exit_code == 0
+                
+                # Get original content
+                exploration_file = Path(".agent/memory/knowledge/project_structure.md")
+                original_content = exploration_file.read_text()
+                
+                # Run init again with different mock
+                mock_explore.return_value = "Second exploration"
+                result2 = runner.invoke(cli, ["init"])
+                
+                # Content should be updated (not preserved)
+                new_content = exploration_file.read_text()
+                assert "Second exploration" in new_content
+
+    def test_init_exploration_with_nested_source_files(self, runner, tmp_path):
+        """Test exploration detects nested source files."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Create nested source structure inside isolated filesystem
+            Path("src").mkdir()
+            Path("tests").mkdir()
+            
+            (Path("src") / "app.py").write_text("print('app')")
+            (Path("src") / "models.py").write_text("class Model: pass")
+            (Path("tests") / "test_app.py").write_text("def test_app(): pass")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore:
+                mock_explore.return_value = "Nested structure detected"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                assert result.exit_code == 0
+                mock_explore.assert_called_once()
+
+    def test_init_configure_llm_called_before_exploration(self, runner, tmp_path):
+        """Test that LLM is configured before exploration is attempted."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("main.py").write_text("print('hello')")
+            
+            with patch("sebba_code.tools.explore_agent.explore_codebase") as mock_explore, \
+                 patch("sebba_code.cli._configure_llm_from_config") as mock_configure:
+                mock_explore.return_value = "Test"
+                
+                result = runner.invoke(cli, ["init"])
+                
+                assert result.exit_code == 0
+                # Configure should be called before explore
+                mock_configure.assert_called_once()

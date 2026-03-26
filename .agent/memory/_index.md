@@ -21,10 +21,21 @@ Graph wiring: synchronous downstream for tight coupling (shared state, sequentia
 Cheap model config: _get_cheap_model() + SEBBA_CHEAP_MODEL env var for L2→L1 summarization; default unchanged
 Execution nodes: worker.py timeout validated, execute.py/context.py/explore.py gaps pending
 Execute subgraph: 6-node workers with timeout/error recovery
-architecture/explore-task-delegation.md: Confirm delegate patterns absent from codebase
+architecture/explore-tool-preference-tests.md: Confirm delegate patterns absent from codebase
 architecture/plan-architecture.md: Planning loop reviews (draft→critique→refine→write) all in state, no subagent delegation
 architecture/exec-flow.md: Execute subgraph (6-node workers) separate from planning phase goals
 architecture/planning-nodes.md: added 'Explore Before Planning' directive
 architecture/planning-node.md: ## draft_roadmap Node → now enforces explore_before_planning directive
 planning-node.md: draft_roadmap→critique_roadmap EXPLRE_PATTERNS → refine_roadmap→write_roadmap
 architecture/planning-nodes.md: # Planning Node Architecture / ## Expl Tool Preference: Line 158 specifies direct explore_codebase / raises directive / Tests verify subagent NOT used / TestExploreToolPreference COV=23835 chars / pytest PASS
+CLI init subcommand delegates to init_agent_structure() per CLI state flow pattern - uses cwd as default project path
+architecture/exec-flow.md: Execute subgraph validated 6-node workers, execute.py/context.py/explore.py gaps pending
+architecture/tool-implementation-patterns.md: Execute tools follow code.py pattern, use subprocess for shell compatibility
+draft_roadmap→critique EXPLRE_PATTERNS→refine_roadmap→write, no subagent delegation
+Hybrid grep+git test verification + environment variable manipulation for config testing
+Pre-commit hook 1479 char limit + validate .gitignore/README consistency before commit
+Memory extraction writes L2 only; condensation pipeline async gateway→L1 with 50 char threshold
+Testrás: importing.py succeeds first, then pytest; LLM mocks need complete response objects
+EXPLORE_PATTERNS check catches subagent delegation bypassing human approval gate
+EXPLORE_TOOL: Verify planner calls direct tool before delegation
+23835 char coverage for explore planning validation

@@ -4,9 +4,22 @@ from sebba_code.constants import get_agent_dir
 
 
 def init_agent_structure() -> None:
-    """Create the .agent/ directory structure with empty templates."""
+    """Create the .agent/ directory structure with empty templates.
+    
+    Creates the full agent directory tree:
+    .agent/
+        memory/
+            context/      - conversation context and state snapshots
+            knowledge/    - persistent knowledge and learnings
+            history/      - session and execution history
+            scratch/      - temporary working files
+        rules/            - agent rules and guidelines
+        branches/         - branch state snapshots
+        sessions/         - session logs
+    """
     agent_dir = get_agent_dir()
 
+    # Base directories
     dirs = [
         agent_dir / "memory",
         agent_dir / "rules",
@@ -14,6 +27,16 @@ def init_agent_structure() -> None:
         agent_dir / "sessions",
     ]
     for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Memory subdirectories
+    memory_subdirs = [
+        agent_dir / "memory" / "context",
+        agent_dir / "memory" / "knowledge",
+        agent_dir / "memory" / "history",
+        agent_dir / "memory" / "scratch",
+    ]
+    for d in memory_subdirs:
         d.mkdir(parents=True, exist_ok=True)
 
     # Create empty index
