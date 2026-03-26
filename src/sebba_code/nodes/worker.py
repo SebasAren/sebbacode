@@ -236,6 +236,17 @@ def _build_worker_system_prompt(state: WorkerState) -> str:
         f"Target files: {', '.join(task['target_files']) if task['target_files'] else 'none specified'}"
     )
 
+    sections.append(
+        "# Working Rules\n"
+        "- **Do NOT create markdown files as deliverables** (no report files, audit files, "
+        "summary docs, or README-style outputs). Your findings, analysis, and conclusions "
+        "belong in the conversation — they will be captured automatically in the task result.\n"
+        "- Only use write_file for actual source code, config, or test files that are part of "
+        "the task's objective.\n"
+        "- If a task asks you to 'document', 'audit', or 'report', produce your analysis as "
+        "a message, not a file."
+    )
+
     if state.get("worker_briefing"):
         sections.append(f"# Codebase Briefing\n{state['worker_briefing']}")
 
