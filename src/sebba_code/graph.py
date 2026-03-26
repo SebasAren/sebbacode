@@ -7,6 +7,7 @@ from sebba_code.nodes.dispatch import collect_results, dispatch_tasks
 from sebba_code.nodes.explore import explore_bootstrap
 from sebba_code.nodes.extract import extract_session
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
+from sebba_code.nodes.plan_recon import plan_recon
 from sebba_code.nodes.planning import (
     is_planning_complete,
     plan_critique,
@@ -31,6 +32,7 @@ def build_agent_graph(checkpointer=None):
     # --- Nodes ---
     graph.add_node("load_context", load_context)
     graph.add_node("explore_bootstrap", explore_bootstrap)
+    graph.add_node("plan_recon", plan_recon)
     graph.add_node("plan_draft", plan_draft)
     graph.add_node("plan_critique", plan_critique)
     graph.add_node("plan_refine", plan_refine)
@@ -50,9 +52,10 @@ def build_agent_graph(checkpointer=None):
     graph.add_conditional_edges(
         "load_context",
         needs_bootstrap,
-        {"yes": "explore_bootstrap", "no": "plan_draft"},
+        {"yes": "explore_bootstrap", "no": "plan_recon"},
     )
-    graph.add_edge("explore_bootstrap", "plan_draft")
+    graph.add_edge("explore_bootstrap", "plan_recon")
+    graph.add_edge("plan_recon", "plan_draft")
 
     # Planning loop
     graph.add_edge("plan_draft", "plan_critique")

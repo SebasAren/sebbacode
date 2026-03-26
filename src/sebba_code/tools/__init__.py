@@ -1,4 +1,5 @@
 from sebba_code.tools.code import read_file, run_command, write_file
+from sebba_code.tools.explore_agent import explore_codebase
 from sebba_code.tools.exploration import (
     adopt,
     evaluate,
@@ -11,6 +12,7 @@ from sebba_code.tools.progress import (
     mark_task_done,
     signal_blocked,
 )
+from sebba_code.tools.search import search_code, search_files
 
 
 def get_all_tools() -> list:
@@ -19,6 +21,9 @@ def get_all_tools() -> list:
         read_file,
         write_file,
         run_command,
+        search_files,
+        search_code,
+        explore_codebase,
         mark_task_done,
         signal_blocked,
         add_subtask,
@@ -36,6 +41,9 @@ def get_worker_tools() -> list:
         read_file,
         write_file,
         run_command,
+        search_files,
+        search_code,
+        explore_codebase,
         mark_task_done,
         signal_blocked,
         add_subtask,

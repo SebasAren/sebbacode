@@ -106,6 +106,7 @@ Example:
 5. Limit to 3-8 tasks — prefer fewer, larger tasks over many small ones
 6. Each task should be completable in one session (1-4 hours)
 7. Reference existing patterns in the codebase where applicable
+8. IMPORTANT: Use actual file paths from the codebase briefing above. Do NOT invent paths — find where similar code already lives and place new files alongside it.
 
 Generate your task plan JSON now.
 """
