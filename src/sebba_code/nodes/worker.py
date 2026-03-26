@@ -30,19 +30,22 @@ def worker_recon(state: WorkerState) -> dict:
     file_contents = {}
     for f in target_files:
         path = Path(f)
-        if path.exists():
+        if path.is_file():
             content = path.read_text()
             if len(content) > 3000:
                 file_contents[f] = summarise_file(f, content)
             else:
                 file_contents[f] = content
+        elif path.is_dir():
+            entries = sorted(p.name for p in path.iterdir())[:30]
+            file_contents[f] = f"(directory with {len(entries)} entries: {', '.join(entries)})"
         else:
             file_contents[f] = "(does not exist yet)"
 
     # Trace imports one level deep
     dependency_map = {}
     for f in target_files:
-        if Path(f).exists() and f.endswith((".ts", ".js", ".tsx", ".jsx", ".py")):
+        if Path(f).is_file() and f.endswith((".ts", ".js", ".tsx", ".jsx", ".py")):
             result = subprocess.run(
                 ["grep", "-E", r"^(import|export.*from|from .* import)", f],
                 capture_output=True, text=True,
@@ -53,6 +56,8 @@ def worker_recon(state: WorkerState) -> dict:
     # Find related test files
     test_files = {}
     for f in target_files:
+        if not Path(f).is_file():
+            continue
         stem = Path(f).stem
         for pattern in [f"**/{stem}.test.ts", f"**/{stem}.spec.ts", f"**/{stem}_test.py", f"**/test_{stem}.py"]:
             for test_file in Path(".").glob(pattern):
