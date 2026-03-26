@@ -12,28 +12,24 @@ SEBBA_API_KEY = "{{env.VENICE_API_KEY}}"
 SEBBA_CHEAP_API_KEY = "{{env.VENICE_API_KEY}}"
 
 [tasks.run]
-run = "uv run sebba-code run -v"
-description = "Execute the agent graph against the current roadmap"
+run = "uv run sebba-code run -v \"$@\""
+description = "Plan and execute tasks for a given request"
 
 [tasks.init]
 run = "uv run sebba-code init"
 description = "Create the .agent/ directory structure"
 
-[tasks.seed]
-run = "uv run sebba-code seed"
-description = "Seed a roadmap from an issue description"
-
 [tasks.debug]
-run = "uv run sebba-code run -v --debug-prompts"
+run = "uv run sebba-code run -v --debug-prompts \"$@\""
 description = "Execute with full prompt/message debug logging"
 
-[tasks.dry-run]
-run = "uv run sebba-code run --dry-run"
-description = "Print next roadmap todo and exit"
+[tasks.auto]
+run = "uv run sebba-code run -v --auto-approve \"$@\""
+description = "Plan and execute with auto-approved plan"
 
 [tasks.plan]
-run = "uv run sebba-code plan"
-description = "Generate a roadmap using the planning loop for iterative refinement"
+run = "uv run sebba-code plan \"$@\""
+description = "Preview task DAG without executing"
 
 [tasks.test]
 run = "uv run pytest tests/ -v"
