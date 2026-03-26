@@ -10,9 +10,9 @@ sebba-code executes tasks using a LangGraph state machine with DAG-based paralle
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         Agent Graph                                   │
 │                                                                       │
-│  load_context → [bootstrap?] → plan_draft → plan_critique           │
-│         ↓              ↓            ↓                               │
-│  explore_bootstrap    START      [complete?] → build_dag            │
+│  load_context → [bootstrap?] → plan_recon → plan_draft → plan_critique
+│         ↓              ↓            ↓            ↓                  │
+│  explore_bootstrap    START         ...    [complete?] → build_dag   │
 │                                             ↓                        │
 │                                     human_approval                   │
 │                                             ↓                        │
@@ -20,7 +20,9 @@ sebba-code executes tasks using a LangGraph state machine with DAG-based paralle
 │                                    ↓              ↓                 │
 │                              [more tasks?]    collect_results       │
 │                                    ↓              ↓                 │
-│                              dispatch_tasks → extract_session → END │
+│                              dispatch_tasks → extract_session        │
+│                                                        ↓             │
+│                                              summarize_to_l1 → END   │
 └──────────────────────────────────────────────────────────────────────┘
                               ↓
                     .agent/
@@ -38,7 +40,7 @@ sebba-code executes tasks using a LangGraph state machine with DAG-based paralle
 The main graph orchestrates four phases:
 
 1. **Load & Bootstrap** — Load L0 memory index, detect git state, bootstrap if codebase is new
-2. **Plan** — Draft roadmap with iterative critique-refine, build task DAG
+2. **Plan** — Recon codebase, draft roadmap with iterative critique-refine, build task DAG
 3. **Execute** — Dispatch tasks to parallel workers with human approval gating
 4. **Extract** — Distill learnings into memory, archive completed roadmap
 
@@ -74,14 +76,14 @@ worker_recon → worker_match_rules → worker_deepen_context → llm_call
 For roadmap creation, an iterative draft-critique-refine cycle:
 
 ```
-draft_roadmap → critique_roadmap → refine_roadmap → build_dag
-                     ↓
-              planning_complete?
+plan_draft → plan_critique → refine_roadmap → build_dag
+                 ↓
+          planning_complete?
 ```
 
-- **draft_roadmap**: Creates initial roadmap from user request
-- **critique_roadmap**: Evaluates with cheap model, identifies issues
-- **refine_roadmap**: Addresses critique, can iterate up to max_iterations
+- **plan_draft**: Creates initial roadmap from user request
+- **plan_critique**: Evaluates with cheap model, identifies issues
+- **plan_refine**: Addresses critique, can iterate up to max_iterations
 - **build_dag**: Converts roadmap todos into executable task DAG
 
 ## Installation
@@ -90,8 +92,12 @@ draft_roadmap → critique_roadmap → refine_roadmap → build_dag
 # Install with uv (recommended)
 uv pip install -e .
 
+# Install with dev dependencies
+uv pip install -e ".[dev]"
+
 # Or with pip
 pip install -e .
+pip install -e ".[dev]"
 ```
 
 Requires Python 3.11+.
@@ -108,6 +114,7 @@ Requires Python 3.11+.
 | `seed` | `--labels`, `-l` | Labels to include in roadmap |
 | `seed` | `--refine` | Use the planning loop for iterative refinement |
 | `plan` | `--iterations`, `-i` | Override max planning iterations (default: 3) |
+| `plan` | — | Generate an execution plan without running it |
 | `status` | — | Print summary of roadmap progress and memory files |
 
 ### Global Options
@@ -115,6 +122,44 @@ Requires Python 3.11+.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--agent-dir` | `.agent` | Path to the agent directory |
+
+## Agent Tools
+
+### Core Tools (All Agents)
+
+| Tool | Module | Description |
+|------|--------|-------------|
+| `read_file` | `code.py` | Read file contents with truncation for large files |
+| `write_file` | `code.py` | Write content to file, creating parent dirs as needed |
+| `run_command` | `code.py` | Execute shell commands with output capture |
+| `search_code` | `search.py` | Search file contents using grep |
+| `search_files` | `search.py` | Find files matching glob patterns |
+| `explore_codebase` | `explore_agent.py` | LLM-guided codebase exploration |
+| `mark_todo_done` | `progress.py` | Mark a todo item as completed |
+| `add_subtask` | `progress.py` | Add a new task to the execution DAG |
+| `signal_blocked` | `progress.py` | Signal that current task is blocked |
+| `explore` | `exploration.py` | Create git worktrees for parallel exploration |
+| `try_approach` | `exploration.py` | Record an implementation attempt |
+| `evaluate` | `exploration.py` | Pick winning approach from exploration |
+| `adopt` | `exploration.py` | Merge winner and cleanup worktrees |
+| `memory_query` | `memory.py` | Search agent memory for context |
+
+### Worker Tools
+
+Workers have a focused toolset optimized for task execution:
+
+| Tool | Module | Description |
+|------|--------|-------------|
+| `read_file` | `code.py` | Read file contents |
+| `write_file` | `code.py` | Write content to file |
+| `run_command` | `code.py` | Execute shell commands |
+| `search_code` | `search.py` | Search file contents |
+| `search_files` | `search.py` | Find files by pattern |
+| `explore_codebase` | `explore_agent.py` | LLM-guided exploration |
+| `mark_todo_done` | `progress.py` | Mark todo as completed |
+| `signal_blocked` | `progress.py` | Signal blocked task |
+| `add_subtask` | `progress.py` | Add new task |
+| `memory_query` | `memory.py` | Query agent memory |
 
 ## Quick Start
 
@@ -301,86 +346,29 @@ Rules without `paths:` are global — always loaded.
 After completing todos, the agent extracts session summaries that distill learnings into memory:
 
 ```markdown
-# Session Summary:
+# Session Summary: Implement User Authentication
+Date: 2026-03-26
+Tasks Completed: 3
 
-... (truncated, 14389 total chars)
-8cb9964 fix: enforce hard timeout on worker summarize/extract LLM calls
-76edb05 fix: prevent workers from creating markdown deliverables on disk
-4e61496 fix: add worker resilience — LLM timeouts, loop limits, and DAG-aware failure recovery
-8f9b844 fix: add WorkerOutput schema to prevent parallel memory merge conflict
-355ed47 fix: handle directory paths in worker_recon target_files
-ddbbef7 fix: add task_results to WorkerState so worker results merge into parent state
-ad11d07 fix: rename WorkerState.briefing to worker_briefing to avoid parallel merge conflict
-547f7cc feat: temp changes
-2c1b933 refactor: replace roadmap with state-driven DAG and parallel execution
-ce8c4e3 chore: clean up .agent/ directory after GCC removal
+## Key Learnings
+- JWT tokens work well with our existing shared-lib
+- Middleware approach is cleaner than route-level auth
+- Tests require mocking the token validation
+
+## Decisions
+- Adopted middleware pattern for auth (vs. decorators)
+- Using httpOnly cookies for refresh tokens
 ```
 
-## What I Did
+## Exploration Tools
 
-This is a high-level summary of the implementation.
+The agent supports parallel exploration via git worktrees:
 
-## Decisions Made
+| Tool | Description |
+|------|-------------|
+| `explore` | Create worktrees for parallel approach exploration |
+| `try_approach` | Record an implementation attempt |
+| `evaluate` | Select winning approach with reasoning |
+| `adopt` | Merge winner and cleanup worktrees |
 
-Key architectural decisions and their rationale.
-
-## Issues Encountered
-
-Problems encountered during execution and how they were resolved.
-
-## Files Touched
-
-List of files created or modified during the session.
-
-## Agent Tools
-
-### Exploration Tools
-
-Tools for exploring the codebase and git history.
-
-## Graph Nodes
-
-### Main Graph Nodes
-
-The main graph consists of 12 nodes that orchestrate the agent workflow.
-
-### Worker Subgraph Nodes
-
-Each task worker runs a subgraph for focused execution.
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
-
-## Project Structure
-
-```
-sebba_code/
-├── __init__.py          # Package entry
-├── __main__.py          # CLI entry point
-├── cli.py               # CLI commands
-├── config.py            # Configuration loading
-├── constants.py         # Constants
-├── graph.py            # LangGraph assembly
-├── llm.py              # LLM configuration
-├── prompts.py           # System prompts
-├── seed.py             # Roadmap seeding
-├── state.py             # State definitions
-├── nodes/              # Graph nodes
-│   ├── approval.py
-│   ├── context.py
-│   ├── dispatch.py
-│   ├── execute.py
-│   ├── explore.py
-│   ├── extract.py
-│   ├── load_context.py
-│   ├── planning.py
-│   ├── rules.py
-│   └── worker.py
-├── tools/              # Agent tools
-│   └── ...
-└── helpers/            # Utilities
-    └── ...
-```
-
-## License
+Worktrees are stored in `.agent/worktrees/` with exploration context in `.agent/branches/`.
