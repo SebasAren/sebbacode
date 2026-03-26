@@ -330,7 +330,7 @@ class TestWorkerCommitChanges:
         mock_result = {"type": "feat", "scope": "auth", "description": "add OAuth2 support"}
 
         monkeypatch.setattr("sebba_code.helpers.git.git_run", mock_git_run)
-        monkeypatch.setattr("sebba_code.nodes.worker.invoke_with_timeout", lambda llm, prompt: mock_result)
+        monkeypatch.setattr("sebba_code.nodes.worker.invoke_structured", lambda llm, schema, prompt, **kw: mock_result)
         monkeypatch.setattr("sebba_code.nodes.worker.get_cheap_llm", lambda: MagicMock())
 
         state = _make_worker_state()

@@ -4,14 +4,48 @@ import logging
 import subprocess
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
 from sebba_code.helpers.files import list_available_files
 from sebba_code.helpers.markdown import append_to_section, replace_section, summarise_file
-from sebba_code.helpers.parsing import format_dict, parse_json
-from sebba_code.llm import get_llm
+from sebba_code.helpers.parsing import format_dict
+from sebba_code.llm import get_llm, invoke_structured
 from sebba_code.state import AgentState
 
 logger = logging.getLogger("sebba_code")
+
+
+class L2File(BaseModel):
+    path: str
+    content: str
+
+
+class InferredRule(BaseModel):
+    file: str
+    paths: list[str] | None = None
+    content: str
+
+
+class BootstrapResult(BaseModel):
+    index_md: str
+    architecture_md: str
+    conventions_md: str
+    l2_files: list[L2File] = []
+    inferred_rules: list[InferredRule] = []
+
+
+class Correction(BaseModel):
+    type: str
+    detail: str
+    reason: str
+
+
+class ValidationResult(BaseModel):
+    corrections: list[Correction] = []
+    updated_target_files: list[str] = []
+    warnings: list[str] = []
+    briefing: str = ""
 
 
 def explore_bootstrap(state: AgentState) -> dict:
@@ -91,8 +125,7 @@ Generate a JSON object:
     llm = get_llm()
     if DEBUG_PROMPTS:
         logger.debug("── bootstrap prompt (%d chars) ──\n%s", len(bootstrap_prompt), bootstrap_prompt[:2000])
-    response = llm.invoke(bootstrap_prompt)
-    result = parse_json(response.content)
+    result = invoke_structured(llm, BootstrapResult, bootstrap_prompt)
 
     # Write memory files
     memory_dir = agent_dir / "memory"
@@ -188,8 +221,7 @@ Only flag real problems, not theoretical ones.
     llm = get_llm()
     if DEBUG_PROMPTS:
         logger.debug("── validate prompt (%d chars) ──\n%s", len(validate_prompt), validate_prompt[:2000])
-    response = llm.invoke(validate_prompt)
-    result = parse_json(response.content)
+    result = invoke_structured(llm, ValidationResult, validate_prompt)
 
     # Apply corrections to main.md
     main_md = agent_dir / "roadmap.md"

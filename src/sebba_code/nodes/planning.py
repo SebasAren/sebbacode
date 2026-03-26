@@ -1,5 +1,6 @@
 """Planning loop nodes for the agent graph."""
 
+import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 
 from sebba_code.constants import get_agent_dir
 from sebba_code.helpers.parsing import parse_json
-from sebba_code.llm import get_llm
+from sebba_code.llm import get_llm, invoke_structured
 from sebba_code.planning_prompts import draft_plan_prompt
 from sebba_code.state import AgentState
 
@@ -160,10 +161,9 @@ def plan_draft(state: AgentState, configurable: dict | None = None) -> dict:
         tool_messages = _run_tool_calls_parallel(response.tool_calls, explore_codebase)
         messages.extend(tool_messages)
 
-    # Force structured output to guarantee valid JSON plan
-    llm_structured = llm.with_structured_output(PlanResult)
-    plan_result = llm_structured.invoke(messages)
-    draft_content = plan_result.model_dump_json()
+    # Structured output with fallback for models that don't support response_format
+    plan_result = invoke_structured(llm, PlanResult, messages)
+    draft_content = json.dumps(plan_result)
     logger.debug("Generated task plan (%d chars)", len(draft_content))
 
     current = state.get("planning_iteration", 0)

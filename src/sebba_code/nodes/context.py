@@ -2,11 +2,17 @@
 
 import logging
 
+from pydantic import BaseModel
+
 from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
 from sebba_code.helpers.files import is_relevant, list_available_files
-from sebba_code.helpers.parsing import parse_json_list
-from sebba_code.llm import get_llm
+from sebba_code.llm import get_llm, invoke_structured
 from sebba_code.state import AgentState
+
+
+class FileSelection(BaseModel):
+    """LLM-selected list of memory file paths to load."""
+    paths: list[str]
 
 
 logger = logging.getLogger("sebba_code")
@@ -30,14 +36,14 @@ Memory index (L0):
 Available memory files (L1 top-level, L2 in subdirs):
 {list_available_files(agent_dir / "memory", depth=2)}
 
-Return a JSON list of relative paths to load. Be selective.
+Return JSON: {{"paths": ["relative/path1.md", ...]}}. Be selective.
 """
 
     llm = get_llm()
     if DEBUG_PROMPTS:
         logger.debug("── retrieval prompt (%d chars) ──\n%s", len(retrieval_prompt), retrieval_prompt[:2000])
-    response = llm.invoke(retrieval_prompt)
-    requested = parse_json_list(response.content)
+    result = invoke_structured(llm, FileSelection, retrieval_prompt)
+    requested = result.get("paths", [])
 
     l1_files = {}
     l2_files = {}

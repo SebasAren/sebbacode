@@ -122,6 +122,92 @@ def invoke_with_timeout(
             raise TimeoutError(f"LLM call timed out after {timeout_seconds}s")
 
 
+def _is_structured_output_error(e: Exception) -> bool:
+    """Check if an exception is likely due to the model not supporting structured output.
+
+    Intentionally permissive: when falling through the structured output strategy
+    chain, we'd rather fall back to plain JSON parsing than crash.  Only errors
+    clearly unrelated to structured output (auth, rate limits, timeouts, network)
+    are excluded.
+    """
+    # Never swallow timeouts or connection errors
+    if isinstance(e, (TimeoutError, ConnectionError, OSError)):
+        return False
+
+    err_msg = str(e).lower()
+
+    # Explicit structured output errors
+    if "response_format" in err_msg or "structured" in err_msg:
+        return True
+
+    if isinstance(e, NotImplementedError):
+        return True
+
+    # Don't swallow auth or rate-limit errors
+    for kw in ("401", "403", "unauthorized", "forbidden", "rate limit", "rate_limit", "429"):
+        if kw in err_msg:
+            return False
+
+    # Server / bad-request errors from providers that can't handle the mode
+    for kw in ("500", "400", "internal server error", "bad request",
+               "inference", "processing failed",
+               "not supported", "unsupported", "invalid"):
+        if kw in err_msg:
+            return True
+
+    # Check common HTTP status attributes
+    status = getattr(e, "status_code", None) or getattr(e, "status", None)
+    if status in (400, 500, 501, 502, 503):
+        return True
+
+    return False
+
+
+def invoke_structured(llm: BaseChatModel, schema, messages, timeout_seconds=None):
+    """Invoke LLM expecting structured output, with tiered fallback.
+
+    Tries three strategies in order:
+    1. with_structured_output (json_schema mode via response_format)
+    2. with_structured_output (function_calling mode via tool calls)
+    3. Plain invoke + JSON parsing + Pydantic validation
+    """
+
+    def _invoke(structured_llm):
+        if timeout_seconds:
+            return invoke_with_timeout(structured_llm, messages, timeout_seconds)
+        return structured_llm.invoke(messages)
+
+    def _as_dict(result):
+        """Normalize to dict regardless of whether the strategy returned a Pydantic model or dict."""
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        return result
+
+    # Strategy 1: json_schema (response_format)
+    try:
+        return _as_dict(_invoke(llm.with_structured_output(schema)))
+    except Exception as e:
+        if not _is_structured_output_error(e):
+            raise
+        logger.info("json_schema mode not supported, trying function_calling")
+
+    # Strategy 2: function_calling (tool use)
+    try:
+        return _as_dict(_invoke(llm.with_structured_output(schema, method="function_calling")))
+    except Exception as e:
+        if not _is_structured_output_error(e):
+            raise
+        logger.info("function_calling mode not supported, falling back to JSON parsing")
+
+    # Strategy 3: plain invoke + parse
+    from sebba_code.helpers.parsing import parse_json
+
+    response = _invoke(llm)
+    text = response.content if hasattr(response, "content") else str(response)
+    raw = parse_json(text)
+    return schema.model_validate(raw).model_dump()
+
+
 def get_llm(model: str | None = None) -> BaseChatModel:
     """Get the primary LLM instance.
 

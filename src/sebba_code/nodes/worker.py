@@ -14,8 +14,9 @@ from sebba_code.helpers.markdown import summarise_file
 from sebba_code.helpers.memory_ops import format_session_from_summaries
 from pydantic import BaseModel
 
-from sebba_code.helpers.parsing import format_dict, parse_json_list
-from sebba_code.llm import get_cheap_llm, get_llm, invoke_with_timeout
+from sebba_code.helpers.parsing import format_dict
+from sebba_code.llm import get_cheap_llm, get_llm, invoke_structured, invoke_with_timeout
+from sebba_code.nodes.context import FileSelection
 from sebba_code.state import TaskResult, WorkerOutput, WorkerState
 from sebba_code.tools import get_worker_tools
 
@@ -266,12 +267,12 @@ Memory index (L0):
 Available memory files (L1 top-level, L2 in subdirs):
 {list_available_files(agent_dir / "memory", depth=2)}
 
-Return a JSON list of relative paths to load. Be selective.
+Return JSON: {{"paths": ["relative/path1.md", ...]}}. Be selective.
 """
 
     llm = get_llm()
-    response = llm.invoke(retrieval_prompt)
-    requested = parse_json_list(response.content)
+    result = invoke_structured(llm, FileSelection, retrieval_prompt)
+    requested = result.get("paths", [])
 
     l1_files = {}
     l2_files = {}
@@ -483,8 +484,7 @@ def worker_summarize(state: WorkerState) -> dict:
                 f' "files_touched": "comma-separated files modified (or empty string)"}}'
             )
             logger.info("worker_summarize: calling cheap LLM for task %s", task["id"])
-            llm = get_cheap_llm().with_structured_output(TaskSummaryResult)
-            result = invoke_with_timeout(llm, prompt, timeout_seconds=45)
+            result = invoke_structured(get_cheap_llm(), TaskSummaryResult, prompt, timeout_seconds=45)
             logger.info("worker_summarize: LLM responded for task %s", task["id"])
             if result:
                 summary_text = result.get("summary", summary_text)
@@ -575,8 +575,7 @@ def worker_commit_changes(state: WorkerState) -> dict:
             f'Respond with JSON: {{"type": "feat|fix|docs|refactor|test|chore", '
             f'"scope": "optional short scope", "description": "imperative mood, under 72 chars"}}'
         )
-        llm = get_cheap_llm().with_structured_output(CommitClassification)
-        commit_info = invoke_with_timeout(llm, prompt)
+        commit_info = invoke_structured(get_cheap_llm(), CommitClassification, prompt)
     except Exception:
         logger.warning("worker_commit: LLM commit message generation failed, using fallback")
         commit_info = None
@@ -670,9 +669,8 @@ Rules:
 """
 
     try:
-        llm = get_cheap_llm().with_structured_output(ExtractionResult)
         logger.info("worker_extract_memory: calling cheap LLM for task %s", task["id"])
-        updates = invoke_with_timeout(llm, extraction_prompt)
+        updates = invoke_structured(get_cheap_llm(), ExtractionResult, extraction_prompt)
         logger.info("worker_extract_memory: LLM responded for task %s", task["id"])
     except TimeoutError:
         logger.warning("Task %s memory extraction LLM call timed out", task["id"])
