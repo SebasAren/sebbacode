@@ -52,6 +52,7 @@ class WorkerState(TypedDict):
     target_files: list[str]
     working_branch: Optional[str]
     task_result: Optional[TaskResult]
+    task_results: Annotated[list[TaskResult], operator.add]  # output to parent
 
 
 class AgentState(TypedDict):

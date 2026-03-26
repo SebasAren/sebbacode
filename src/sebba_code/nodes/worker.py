@@ -329,7 +329,7 @@ def worker_extract_memory(state: WorkerState) -> dict:
     task = state["task"]
     task_result = state.get("task_result")
     if not task_result:
-        return {}
+        return {"task_results": []}
 
     agent_dir = get_agent_dir()
     memory = state["memory"]
@@ -391,7 +391,7 @@ Rules:
     if task_result:
         task_result["memory_updates"] = updates
 
-    return {"task_result": task_result}
+    return {"task_result": task_result, "task_results": [task_result]}
 
 
 def build_task_worker():
