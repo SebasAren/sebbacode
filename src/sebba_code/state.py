@@ -24,6 +24,23 @@ class TodoItem(TypedDict):
     index: int
 
 
+class PlanState(TypedDict):
+    """State for the planning-only graph."""
+
+    # Planning loop
+    user_request: str
+    draft_roadmap: str
+    planning_messages: Annotated[list[BaseMessage], add_messages]
+    planning_iteration: int
+    planning_complete: bool
+
+    # Context (optional, enriches planning prompts)
+    roadmap: str
+    target_files: list[str]
+    briefing: str
+    memory: AgentMemoryContext
+
+
 class AgentState(TypedDict):
     """Main graph state."""
 

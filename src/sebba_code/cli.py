@@ -261,21 +261,22 @@ def plan(description: str, iterations: int | None):
     # Ensure the agent directory structure exists
     init_agent_structure()
 
-    from sebba_code.graph import build_agent_graph
+    from sebba_code.plan_graph import build_plan_graph
 
-    graph = build_agent_graph()
+    graph = build_plan_graph()
 
     logger.info("Starting planning loop...")
-    
-    # Build initial state with planning fields
+
+    # Build initial state for planning
     initial_state = {
-        # Existing fields needed by graph
-        "messages": [],
+        "user_request": description,
+        "draft_roadmap": "",
+        "planning_messages": [],
+        "planning_iteration": 0,
+        "planning_complete": False,
         "roadmap": "",
-        "current_todo": None,
         "target_files": [],
         "briefing": "",
-        "exploration_mode": "execute",
         "memory": {
             "l0_index": "",
             "l1_files": {},
@@ -283,16 +284,6 @@ def plan(description: str, iterations: int | None):
             "active_rules": {},
             "session_history": "",
         },
-        "working_branch": None,
-        "session_start_commit": 0,
-        "todos_completed_this_session": [],
-        "max_todos": None,
-        # Planning loop fields
-        "user_request": description,
-        "draft_roadmap": "",
-        "planning_messages": [],
-        "planning_iteration": 0,
-        "planning_complete": False,
     }
 
     # Get max iterations: CLI arg overrides config, config has its own default of 3
@@ -311,6 +302,11 @@ def plan(description: str, iterations: int | None):
     if planning_model:
         configurable["planning_model"] = planning_model
 
+    import time
+
+    iteration = 0
+    start_time = time.monotonic()
+
     try:
         for event in graph.stream(
             initial_state,
@@ -319,21 +315,24 @@ def plan(description: str, iterations: int | None):
                 "configurable": configurable,
             },
         ):
-            # Stream node outputs for visibility
-            for node_name in event.keys():
-                if node_name.startswith("draft_roadmap"):
-                    click.echo("Drafting roadmap...")
-                elif node_name.startswith("critique_roadmap"):
-                    click.echo("Critiquing roadmap...")
-                elif node_name.startswith("refine_roadmap"):
-                    click.echo("Refining roadmap...")
+            elapsed = time.monotonic() - start_time
+            for node_name, node_output in event.items():
+                if node_name == "draft_roadmap":
+                    iteration = node_output.get("planning_iteration", 1)
+                    click.echo(f"[{elapsed:.1f}s] Drafting roadmap...")
+                elif node_name == "critique_roadmap":
+                    complete = node_output.get("planning_complete", False)
+                    status = "passed" if complete else "requesting refinement"
+                    click.echo(f"[{elapsed:.1f}s] Critiquing roadmap (iteration {iteration})... {status}")
+                elif node_name == "refine_roadmap":
+                    iteration = node_output.get("planning_iteration", iteration)
+                    click.echo(f"[{elapsed:.1f}s] Refining roadmap (iteration {iteration}/{max_iterations})...")
                 elif node_name == "write_roadmap":
-                    click.echo("Writing final roadmap...")
+                    click.echo(f"[{elapsed:.1f}s] Writing final roadmap...")
     except NotImplementedError as e:
         click.echo(f"Streaming not supported: {e}")
         click.echo("Falling back to non-streaming mode...")
-        
-        # Fallback: run without streaming
+
         result = graph.invoke(
             initial_state,
             config={
@@ -341,14 +340,14 @@ def plan(description: str, iterations: int | None):
                 "configurable": configurable,
             },
         )
-        
-        # Log the final state
+
         if result.get("planning_complete"):
             click.echo(f"\nPlanning complete after {result.get('planning_iteration', '?')} iterations.")
         if result.get("draft_roadmap"):
             click.echo(f"Generated roadmap with {len(result['draft_roadmap'])} characters.")
 
-    click.echo(f"Roadmap created at {get_agent_dir()}/gcc/main.md")
+    elapsed = time.monotonic() - start_time
+    click.echo(f"[{elapsed:.1f}s] Roadmap created at {get_agent_dir()}/gcc/main.md")
 
 
 if __name__ == "__main__":

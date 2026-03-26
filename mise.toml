@@ -31,6 +31,10 @@ description = "Execute with full prompt/message debug logging"
 run = "uv run sebba-code run --dry-run"
 description = "Print next roadmap todo and exit"
 
+[tasks.plan]
+run = "uv run sebba-code plan"
+description = "Generate a roadmap using the planning loop for iterative refinement"
+
 [tasks.test]
 run = "uv run pytest tests/ -v"
 description = "Run all tests"

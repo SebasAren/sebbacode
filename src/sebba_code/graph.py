@@ -13,14 +13,6 @@ from sebba_code.nodes.extract import (
     sync_progress,
 )
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
-from sebba_code.nodes.planning import (
-    critique_roadmap,
-    draft_roadmap,
-    is_planning_complete,
-    needs_planning,
-    refine_roadmap,
-    write_roadmap,
-)
 from sebba_code.nodes.roadmap import has_todo, is_first_todo, read_roadmap
 from sebba_code.nodes.rules import match_rules
 from sebba_code.state import AgentState
@@ -45,12 +37,6 @@ def build_agent_graph():
     graph.add_node("extract_session", extract_session)
     graph.add_node("roadmap_done", roadmap_done)
 
-    # Add planning nodes
-    graph.add_node("draft_roadmap", draft_roadmap)
-    graph.add_node("critique_roadmap", critique_roadmap)
-    graph.add_node("refine_roadmap", refine_roadmap)
-    graph.add_node("write_roadmap", write_roadmap)
-
     # Entry point
     graph.add_edge(START, "load_context")
 
@@ -62,33 +48,8 @@ def build_agent_graph():
     )
     graph.add_edge("explore_bootstrap", "read_roadmap")
 
-    # Planning loop - check if planning is needed after loading roadmap context
-    graph.add_conditional_edges(
-        "read_roadmap",
-        needs_planning,
-        {
-            "yes": "draft_roadmap",
-            "no": "check_first_todo",  # Skip planning, go to normal flow
-        },
-    )
-
-    # Planning loop: draft → critique → [complete?] → write or refine
-    graph.add_edge("draft_roadmap", "critique_roadmap")
-    graph.add_conditional_edges(
-        "critique_roadmap",
-        is_planning_complete,
-        {
-            "yes": "write_roadmap",
-            "no": "refine_roadmap",
-        },
-    )
-    # Refine loops back to critique for re-evaluation
-    graph.add_edge("refine_roadmap", "critique_roadmap")
-
-    # After writing roadmap, re-read it to populate current_todo for execution
-    graph.add_edge("write_roadmap", "read_roadmap")
-
-    # Normal roadmap execution flow (check has_todo first, then is_first_todo)
+    # Roadmap execution flow (check has_todo first, then is_first_todo)
+    graph.add_edge("read_roadmap", "check_first_todo")
     def todo_router(state):
         if has_todo(state) == "no":
             return "no_todo"

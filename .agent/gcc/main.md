@@ -1,43 +1,40 @@
-# Goal
-
-Add a planning loop to the agent graph that transforms a user's natural language request into a well-structured, validated roadmap before execution begins. This replaces the one-shot `seed` approach with an iterative draft-critique-refine cycle integrated into the LangGraph flow.
+## Goal
+Add a git commit step to the workflow that automatically commits changes after memory extraction, using commit files produced during the extraction/generation process. This automates the version control workflow and ensures extracted memory and generated code changes are tracked.
 
 ## Context
-
-Currently `sebba-code seed "title"` does a single LLM call to generate a roadmap, with no validation against the actual codebase. The `explore_validate` node catches some issues post-hoc, but by then the roadmap is already committed to disk. A planning loop would produce higher-quality roadmaps by iterating before persisting.
+The codebase has a planning loop (draft_roadmap → critique_roadmap → refine_roadmap) and memory extraction with L0/L1/L2 truncation helpers. Currently, changes generated during the workflow are not automatically committed. The "gcc commit files" likely refer to generated commit message files or change manifests produced by memory extraction or the planning nodes. This feature closes the loop by committing those outputs to git.
 
 ## Todos
+- [x] ~~Examine memory extraction nodes to identify where "gcc commit files" are produced and what format they use~~ → Found gcc commit files are produced by finalize_todo node in src/sebba_code/nodes/extract.py. Format: Markdown files at <agent_dir>/gcc/commits/<num>.md with # Commit header, What I Did, Decisions Made, Files Touched sections.
+- [x] ~~Create `commit_changes` node function in `src/sebba_code/nodes/planning.py` that reads commit files and executes git add + git commit~~
+- [x] ~~Update graph routing in `src/sebba_code/graph.py` to add edge from memory extraction → commit_changes~~
+- [ ] Add `commit_on_complete` config option to `PlanningConfig` in `src/sebba_code/config.py` (default: False for backward compatibility)
+- [ ] Implement conditional commit logic: only commit if `commit_on_complete=True` or explicit trigger field present
+- [ ] Add unit tests in `tests/test_nodes/test_planning.py` for commit node with mocked git subprocess calls
+- [ ] Test full cycle: ensure commit happens only after successful memory extraction completes
 
-- [x] Define planning loop state fields in `src/sebba_code/state.py` (`user_request`, `draft_roadmap`, `planning_messages`, `planning_iteration`, `planning_complete`) and add `needs_planning` routing conditional
-- [x] ~~Add `sebba-code plan "description"` CLI command in `src/sebba_code/cli.py` that passes the user request into graph state~~ → Implemented with full initial state, streaming event handling, and NotImplementedError handling. Planning loop nodes still need implementation.
-- [x] Create planning prompt templates (draft, critique, refine) in `src/sebba_code/prompts.py` or a new `planning_prompts.py`
-- [x] ~~Implement `draft_roadmap` node in `src/sebba_code/nodes/planning.py` — takes user request + loaded context (L0 memory, git state, codebase structure) and generates initial roadmap draft in state (not on disk)~~
-- [x] ~~Implement `critique_roadmap` node in `src/sebba_code/nodes/planning.py` — validates draft against codebase (file existence, todo ordering, vague descriptions, scope creep), outputs structured fixes using cheap model~~
-- [x] ~~Implement `refine_roadmap` node in `src/sebba_code/nodes/planning.py` — applies critique fixes to draft, increments `planning_iteration`, sets `planning_complete` when critique has no major issues or max iterations reached~~
-- [x] ~~Implement `write_roadmap` node that persists the finalized draft to `.agent/gcc/main.md`~~
-- [x] ~~Wire the planning loop into `src/sebba_code/graph.py`: `load_context → [needs_planning?] → draft_roadmap → critique_roadmap → [planning_complete?] yes → write_roadmap → read_roadmap, no → refine_roadmap → critique_roadmap`~~
-- [x] ~~Add config options to `src/sebba_code/config.py`: `planning.max_iterations` (default 3), `planning.model`, `planning.auto_approve` (default false)~~ → Implemented PlanningConfig dataclass with three fields (max_iterations, model, auto_approve), integrated into AgentConfig, updated default config YAML in seed.py, updated planning.py to use config via _get_max_iterations() and _get_planning_model(), updated cli.py plan() command to read from config when CLI arg not provided. All 33 tests pass.
-- [x] ~~Write tests in `tests/test_nodes/test_planning.py` covering draft output format, critique detection, refine application, loop termination, and file persistence~~
-
+- [ ] Add todo: Create the `src/sebba_code/` package structure (init files, directory hierarchy) before implementing the planned nodes and config.
 ## Target Files
-
-- src/sebba_code/state.py
-- src/sebba_code/graph.py
-- src/sebba_code/cli.py
-- src/sebba_code/config.py
-- src/sebba_code/prompts.py
-- src/sebba_code/nodes/planning.py
-- src/sebba_code/seed.py
-- tests/test_nodes/test_planning.py
-
+- src/sebba_code/__init__.py (NEW - create first)
+- src/sebba_code/nodes/__init__.py (NEW)
+- src/sebba_code/nodes/planning.py (NEW - add commit_changes)
+- src/sebba_code/graph.py (NEW)
+- src/sebba_code/config.py (NEW - create PlanningConfig with commit_on_complete)
+- tests/__init__.py (NEW)
+- tests/test_nodes/__init__.py (NEW)
+- tests/test_nodes/test_planning.py (NEW)
 ## Active Branches
+- `feature/git-commit-after-memory-extraction` (create)
 
 ## Decisions Made
+- Commit step is conditional (opt-in via config) to preserve existing behavior
+- Uses subprocess for git commands to match existing patterns in codebase
+- Returns commit hash in state for traceability
+- Failure to commit does not halt workflow (graceful degradation with warning)
 
 ## Constraints
-
-- The planning loop must produce markdown in the exact format `read_roadmap` expects (same sections, same todo regex)
-- Draft must stay in state until finalized — no writing to disk during iteration
-- Critique node should use the cheap model to keep costs low
-- Backward compatibility: `sebba-code seed` without `--refine` must keep current one-shot behavior
-- Max 3 planning iterations by default to bound LLM costs
+- Must not break existing planning loop iteration behavior
+- Backward compatible: existing configs without `commit_on_complete` default to current behavior
+- Git operations should be idempotent where possible
+- Follow existing node pattern: return state dict, use typed hints, handle NotImplementedError
+- Add constraint: The 'Context' section references 'memory extraction with L0/L1/L2 truncation helpers' and a 'planning loop' but no such code exists in the codebase.
