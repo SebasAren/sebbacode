@@ -6,20 +6,12 @@ from sebba_code.state import AgentState
 def build_system_prompt(state: AgentState) -> str:
     """Assemble the system prompt from current state."""
     memory = state["memory"]
-    todo = state.get("current_todo")
     sections = []
 
-    if todo:
-        sections.append(
-            f"# Current Objective\n"
-            f"Working on: **{todo['text']}**\n\n"
-            f"Full roadmap:\n{state['roadmap']}"
-        )
+    sections.append(f"# Project Context\n{memory['l0_index']}")
 
     if state.get("briefing"):
         sections.append(f"# Codebase Briefing\n{state['briefing']}")
-
-    sections.append(f"# Project Context\n{memory['l0_index']}")
 
     if memory["active_rules"]:
         rules = "\n\n".join(

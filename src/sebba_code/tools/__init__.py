@@ -7,28 +7,37 @@ from sebba_code.tools.exploration import (
 )
 from sebba_code.tools.memory import memory_query
 from sebba_code.tools.progress import (
-    add_todo,
-    discover_files,
-    mark_todo_done,
+    add_subtask,
+    mark_task_done,
+    signal_blocked,
 )
 
 
 def get_all_tools() -> list:
-    """Return all tools available to the executor."""
+    """Return all tools available to the executor (legacy, includes exploration)."""
     return [
-        # Code tools
         read_file,
         write_file,
         run_command,
-        # Progress tools
-        mark_todo_done,
-        add_todo,
-        discover_files,
-        # Exploration tools
+        mark_task_done,
+        signal_blocked,
+        add_subtask,
         explore,
         try_approach,
         evaluate,
         adopt,
-        # Memory tools
+        memory_query,
+    ]
+
+
+def get_worker_tools() -> list:
+    """Return tools available to a task worker."""
+    return [
+        read_file,
+        write_file,
+        run_command,
+        mark_task_done,
+        signal_blocked,
+        add_subtask,
         memory_query,
     ]

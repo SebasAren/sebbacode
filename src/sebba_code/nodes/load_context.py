@@ -29,10 +29,7 @@ def load_context(state: AgentState) -> dict:
             "session_history": "",
         },
         "working_branch": branch,
-        "todos_completed_this_session": [],
-        "todo_summaries": [],
         "briefing": "",
-        "exploration_mode": "",
     }
 
 

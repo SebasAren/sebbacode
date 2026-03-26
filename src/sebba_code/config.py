@@ -23,8 +23,6 @@ class RulesConfig:
 @dataclass
 class ExplorerConfig:
     bootstrap_on_empty: bool = True
-    validate_new_roadmaps: bool = True
-    recon_before_todo: bool = True
     max_file_read_size: int = 5000
     trace_import_depth: int = 1
     include_git_history: bool = True
@@ -45,8 +43,8 @@ class RetrievalConfig:
 
 @dataclass
 class ExecutionConfig:
-    max_todos_per_session: int = 5
-    max_tool_calls_per_todo: int = 50
+    max_parallel_workers: int = 3
+    max_tool_calls_per_task: int = 50
 
 
 @dataclass

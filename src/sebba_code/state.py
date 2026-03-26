@@ -1,6 +1,7 @@
 """Defines the TypedDict state schema for the agent graph."""
 
-from typing import Annotated, Optional, TypedDict
+import operator
+from typing import Annotated, Literal, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -16,71 +17,67 @@ class AgentMemoryContext(TypedDict):
     session_history: str
 
 
-class TodoItem(TypedDict):
-    """A single todo parsed from the roadmap."""
+class Task(TypedDict):
+    """A single task in the execution DAG."""
 
-    text: str
-    done: bool
-    index: int
+    id: str
+    description: str
+    status: Literal["pending", "running", "done", "blocked"]
+    depends_on: list[str]  # task IDs this depends on
+    blocked_reason: str
+    result_summary: str
+    files_touched: list[str]
+    target_files: list[str]
 
 
-class TodoSummary(TypedDict):
-    """Summary of a completed todo, stored in state instead of commit files."""
+class TaskResult(TypedDict):
+    """Result produced by a task worker."""
 
-    todo_text: str
+    task_id: str
     summary: str
     what_i_did: str
     decisions_made: str
     files_touched: str
+    dag_mutations: list[dict]  # new tasks / blocks discovered
+    memory_updates: dict  # collected for sequential application
 
 
-class PlanState(TypedDict):
-    """State for the planning-only graph."""
+class WorkerState(TypedDict):
+    """Per-task state passed via Send()."""
 
-    # Planning loop
-    user_request: str
-    draft_roadmap: str
-    planning_messages: Annotated[list[BaseMessage], add_messages]
-    planning_iteration: int
-    planning_complete: bool
-
-    # Context (optional, enriches planning prompts)
-    roadmap: str
-    target_files: list[str]
+    task: Task
+    messages: Annotated[list[BaseMessage], add_messages]
     briefing: str
     memory: AgentMemoryContext
+    target_files: list[str]
+    working_branch: Optional[str]
+    task_result: Optional[TaskResult]
 
 
 class AgentState(TypedDict):
-    """Main graph state."""
+    """Unified graph state for planning + execution."""
 
     messages: Annotated[list[BaseMessage], add_messages]
 
-    # Roadmap-driven
-    roadmap: str
-    current_todo: Optional[TodoItem]
-    target_files: list[str]
-
-    # Explorer output
-    briefing: str
-    exploration_mode: str
-
-    # Memory
-    memory: AgentMemoryContext
-
-    # Git
-    working_branch: Optional[str]
-
-    # Session tracking
-    todos_completed_this_session: list[str]
-    todo_summaries: list[TodoSummary]
-
-    # Configurable limits
-    max_todos: Optional[int]  # None = use default from constants
-
-    # Planning loop
+    # Planning
     user_request: str
-    draft_roadmap: str
+    draft_plan: str
     planning_messages: Annotated[list[BaseMessage], add_messages]
     planning_iteration: int
     planning_complete: bool
+    rejection_reason: str
+
+    # Task DAG (replaces roadmap)
+    tasks: dict[str, Task]
+    task_results: Annotated[list[TaskResult], operator.add]
+
+    # Context
+    memory: AgentMemoryContext
+    working_branch: Optional[str]
+    briefing: str
+
+    # Session tracking
+    tasks_completed_this_session: Annotated[list[str], operator.add]
+
+    # Human-in-the-loop
+    plan_approved: Optional[bool]

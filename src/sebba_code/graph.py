@@ -1,78 +1,79 @@
-"""Defines the LangGraph StateGraph workflow for the coding agent."""
+"""Defines the unified LangGraph StateGraph for planning + DAG execution."""
 
 from langgraph.graph import END, START, StateGraph
 
-from sebba_code.nodes.context import deepen_context
-from sebba_code.nodes.done import roadmap_done
-from sebba_code.nodes.execute import build_execute_subgraph
-from sebba_code.nodes.explore import explore_bootstrap, explore_recon, explore_validate
-from sebba_code.nodes.extract import (
-    extract_session,
-    finalize_todo,
-    should_continue,
-)
+from sebba_code.nodes.approval import build_dag, human_approval
+from sebba_code.nodes.dispatch import collect_results, dispatch_tasks
+from sebba_code.nodes.explore import explore_bootstrap
+from sebba_code.nodes.extract import extract_session
 from sebba_code.nodes.load_context import load_context, needs_bootstrap
-from sebba_code.nodes.roadmap import has_todo, is_first_todo, read_roadmap
-from sebba_code.nodes.rules import match_rules
+from sebba_code.nodes.planning import (
+    is_planning_complete,
+    plan_critique,
+    plan_draft,
+    plan_refine,
+)
+from sebba_code.nodes.worker import build_task_worker
 from sebba_code.state import AgentState
 
 
-def build_agent_graph():
-    """Build and compile the full agent graph."""
+def build_agent_graph(checkpointer=None):
+    """Build and compile the unified agent graph.
+
+    Flow:
+        START → load_context → [bootstrap?] → plan_draft → plan_critique
+        → [complete?] → build_dag → human_approval → [approve?]
+        → dispatch_tasks → task_worker(s) → collect_results → [more?]
+        → extract_session → END
+    """
     graph = StateGraph(AgentState)
 
-    # Add nodes
+    # --- Nodes ---
     graph.add_node("load_context", load_context)
     graph.add_node("explore_bootstrap", explore_bootstrap)
-    graph.add_node("read_roadmap", read_roadmap)
-    graph.add_node("check_first_todo", lambda s: s)
-    graph.add_node("explore_validate", explore_validate)
-    graph.add_node("explore_recon", explore_recon)
-    graph.add_node("match_rules", match_rules)
-    graph.add_node("deepen_context", deepen_context)
-    graph.add_node("execute_todo", build_execute_subgraph())
-    graph.add_node("finalize_todo", finalize_todo)
+    graph.add_node("plan_draft", plan_draft)
+    graph.add_node("plan_critique", plan_critique)
+    graph.add_node("plan_refine", plan_refine)
+    graph.add_node("build_dag", build_dag)
+    graph.add_node("human_approval", human_approval)
+    graph.add_node("dispatch_tasks", dispatch_tasks)
+    graph.add_node("task_worker", build_task_worker())
+    graph.add_node("collect_results", collect_results)
     graph.add_node("extract_session", extract_session)
-    graph.add_node("roadmap_done", roadmap_done)
 
-    # Entry point
+    # --- Edges ---
+
+    # Entry
     graph.add_edge(START, "load_context")
 
     # Bootstrap check
     graph.add_conditional_edges(
         "load_context",
         needs_bootstrap,
-        {"yes": "explore_bootstrap", "no": "read_roadmap"},
+        {"yes": "explore_bootstrap", "no": "plan_draft"},
     )
-    graph.add_edge("explore_bootstrap", "read_roadmap")
+    graph.add_edge("explore_bootstrap", "plan_draft")
 
-    # Roadmap execution flow (check has_todo first, then is_first_todo)
-    graph.add_edge("read_roadmap", "check_first_todo")
-    def todo_router(state):
-        if has_todo(state) == "no":
-            return "no_todo"
-        return is_first_todo(state)
-
+    # Planning loop
+    graph.add_edge("plan_draft", "plan_critique")
     graph.add_conditional_edges(
-        "check_first_todo",
-        todo_router,
-        {"no_todo": "roadmap_done", "yes": "explore_validate", "no": "explore_recon"},
+        "plan_critique",
+        is_planning_complete,
+        {"yes": "build_dag", "no": "plan_refine"},
     )
-    graph.add_edge("explore_validate", "explore_recon")
+    graph.add_edge("plan_refine", "plan_critique")
 
-    # Context → execution
-    graph.add_edge("explore_recon", "match_rules")
-    graph.add_edge("match_rules", "deepen_context")
-    graph.add_edge("deepen_context", "execute_todo")
+    # DAG construction → approval
+    graph.add_edge("build_dag", "human_approval")
+    # human_approval returns Command routing to dispatch_tasks or plan_draft
 
-    # Post-execution
-    graph.add_edge("execute_todo", "finalize_todo")
-    graph.add_edge("finalize_todo", "extract_session")
-    graph.add_conditional_edges(
-        "extract_session",
-        should_continue,
-        {"yes": "read_roadmap", "no": END},
-    )
-    graph.add_edge("roadmap_done", "extract_session")
+    # Dispatch → workers → collect → loop or finish
+    # dispatch_tasks returns Command with Send() to task_worker(s)
+    # or Command(goto="extract_session") when done
+    graph.add_edge("task_worker", "collect_results")
+    # collect_results returns Command routing to dispatch_tasks or extract_session
 
-    return graph.compile()
+    # Terminal
+    graph.add_edge("extract_session", END)
+
+    return graph.compile(checkpointer=checkpointer)

@@ -9,13 +9,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv pip install -e .
 
 # Run the agent
-sebba-code run --verbose          # or: mise run run
+sebba-code run "Build feature X" --verbose
+sebba-code run "Fix bug Y" --auto-approve
 sebba-code init                   # create .agent/ structure
-sebba-code seed "Issue title"     # seed roadmap from description
+sebba-code plan "Description"     # preview task DAG without executing
 
 # Tests
 uv run pytest tests/ -v           # or: mise run test
-pytest tests/test_nodes/test_roadmap.py   # single file
+pytest tests/test_nodes/test_dispatch.py  # single file
 
 # Lint/format (not configured in project, but available)
 ruff check src/sebba_code/
@@ -24,31 +25,31 @@ mypy src/sebba_code/
 
 ## Architecture
 
-sebba-code is a **LangGraph coding agent** that executes a roadmap of tasks from `.agent/roadmap.md`, using LLM-guided tool calls. It persists knowledge across sessions via tiered memory.
+sebba-code is a **LangGraph coding agent** with unified planning + parallel DAG execution. Tasks live entirely in LangGraph state (no roadmap files). It persists knowledge across sessions via tiered memory.
 
-### Graph Flow (11 nodes)
+### Graph Flow (12 nodes)
 
 Defined in `src/sebba_code/graph.py`:
 
 ```
 START → load_context → [needs_bootstrap?]
-  yes → explore_bootstrap → read_roadmap
-  no  → read_roadmap → [has_todo?]
-    no  → roadmap_done → extract_session → END
-    yes → [is_first_todo?]
-      yes → explore_validate → explore_recon
-      no  → explore_recon
-    → match_rules → deepen_context → execute_todo (subgraph)
-    → finalize_todo → extract_session → [should_continue?]
-      yes → read_roadmap (loop)
-      no  → END
+  yes → explore_bootstrap → plan_draft
+  no  → plan_draft → plan_critique → [complete?]
+    no  → plan_refine → plan_critique (loop)
+    yes → build_dag → human_approval → [approve?]
+      reject → plan_draft (with feedback)
+      approve → dispatch_tasks → [Send() fan-out]
+        → task_worker (×N parallel) → collect_results
+        → [more ready?] → dispatch_tasks (loop)
+        → [all done] → extract_session → END
 ```
 
-- **execute_todo** is a subgraph with an inner LLM+tools loop (max 50 tool calls per todo)
-- **finalize_todo** marks the todo done in the roadmap and creates a summary in LangGraph state
-- **extract_session** distills todo summaries from state into lasting memory/rules
-- **roadmap_done** archives the completed roadmap to `.agent/roadmaps/archive/`
-- Session processes up to 5 todos before stopping
+- **plan_draft** generates a JSON task plan with dependency edges
+- **human_approval** uses `interrupt()` for user review; rejected plans loop back with feedback
+- **dispatch_tasks** computes ready tasks from the DAG and fans out via `Send()`
+- **task_worker** is a subgraph: recon → rules → context → LLM+tools loop → summarize → extract
+- **collect_results** merges results, applies DAG mutations (new tasks, blocks), routes next wave
+- **extract_session** applies collected memory updates and writes session summary
 
 ### Tiered Memory System
 
@@ -59,15 +60,16 @@ All memory lives under `.agent/memory/`:
 
 ### Key Concepts
 
-- **Roadmap**: Markdown file at `.agent/roadmap.md` with `- [ ] todo` items driving execution. Completed roadmaps are archived to `.agent/roadmaps/archive/`.
-- **Todo summaries**: Per-todo progress summaries stored in LangGraph state (not files), created by `finalize_todo` via cheap LLM summarization of the message history.
-- **Path-scoped rules**: Files in `.agent/rules/` with YAML frontmatter `paths:` globs — matched against target files in `match_rules` node
-- **Exploration via worktrees**: `explore` creates git worktrees for parallel experimentation; `adopt` merges the winner. Branch context stored in `.agent/branches/`.
+- **Task DAG**: Tasks with `depends_on` edges stored in LangGraph state. Independent tasks run in parallel.
+- **Human-in-the-loop**: Plan approval via `interrupt()` + `Command` routing. Rejection feeds back to planning.
+- **Per-task memory extraction**: Each worker collects memory updates; applied sequentially by `extract_session`.
+- **Dynamic DAG mutations**: Workers can signal blocks or add subtasks via tools, applied between dispatch waves.
+- **Path-scoped rules**: Files in `.agent/rules/` with YAML frontmatter `paths:` globs — matched against target files.
 
 ### Source Layout
 
-- `src/sebba_code/nodes/` — Graph node functions (context loading, exploration, execution, extraction)
-- `src/sebba_code/tools/` — 11 LLM-callable tools (file I/O, shell, progress tracking, exploration, memory query)
+- `src/sebba_code/nodes/` — Graph node functions (planning, approval, dispatch, worker, extraction)
+- `src/sebba_code/tools/` — LLM-callable tools (file I/O, shell, task management, memory query)
 - `src/sebba_code/helpers/` — Utilities for git, markdown manipulation, memory ops, rule parsing
 
 ## Configuration

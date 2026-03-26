@@ -38,25 +38,8 @@ def tmp_agent_dir(tmp_path: Path) -> Path:
         "# Testing Rules\n\n- Use vitest\n"
     )
 
-    # Roadmap
-    (agent_dir / "roadmap.md").write_text(
-        "# Test Roadmap\n\n"
-        "## Goal\nTest the agent.\n\n"
-        "## Todos\n"
-        "- [ ] First task\n"
-        "- [ ] Second task\n\n"
-        "## Target Files\n"
-        "- src/app.ts\n"
-        "- src/utils.ts\n\n"
-        "## Decisions Made\nNone.\n\n"
-        "## Constraints\n- Must work\n"
-    )
-
     # Branches (for exploration)
     (agent_dir / "branches").mkdir()
-
-    # Roadmap archive
-    (agent_dir / "roadmaps" / "archive").mkdir(parents=True)
 
     # Sessions
     (agent_dir / "sessions").mkdir()

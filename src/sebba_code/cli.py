@@ -1,19 +1,14 @@
 """Command-line interface commands for the agent."""
 
 import logging
-import re
 from pathlib import Path
 
 import click
 
 from sebba_code.config import load_config
 from sebba_code.constants import get_agent_dir, init_agent_dir, set_debug_prompts
-from sebba_code.llm import configure_llm
 
 logger = logging.getLogger("sebba_code")
-
-# Kept for reference, but config takes precedence
-DEFAULT_PLANNING_MAX_ITERATIONS = 3
 
 
 @click.group()
@@ -34,6 +29,8 @@ def init():
 
 def _configure_llm_from_config():
     """Load config and configure LLM instances."""
+    from sebba_code.llm import configure_llm
+
     config = load_config(get_agent_dir())
     configure_llm(
         model=config.llm.model,
@@ -47,128 +44,53 @@ def _configure_llm_from_config():
     )
 
 
-def _get_next_todo() -> str | None:
-    """Parse roadmap and return the first uncompleted todo, or None if all done."""
-    roadmap_path = get_agent_dir() / "roadmap.md"
-    if not roadmap_path.exists():
-        return None
-
-    with open(roadmap_path) as f:
-        content = f.read()
-
-    # Parse multiline todos: each - [ ] item may span multiple lines
-    # A todo line starts with '- [ ]' (possibly with leading whitespace)
-    lines = content.split("\n")
-    todo_lines = []
-    capturing = False
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- [ ]"):
-            # Start of a new uncompleted todo
-            todo_lines = [stripped[6:].strip()]  # Remove "- [ ]" prefix
-            capturing = True
-        elif capturing:
-            if stripped.startswith("- [") or stripped.startswith("##"):
-                # Next todo or new section - stop capturing
-                break
-            elif stripped:  # Continuation line
-                todo_lines.append(stripped)
-            # Empty lines are part of the todo, keep capturing
-
-    if todo_lines:
-        return " ".join(todo_lines)
-    return None
-
-
-def _count_todos() -> tuple[int, int]:
-    """Parse roadmap and return (completed, pending) todo counts."""
-    roadmap_path = get_agent_dir() / "roadmap.md"
-    if not roadmap_path.exists():
-        return 0, 0
-
-    with open(roadmap_path) as f:
-        content = f.read()
-
-    completed = 0
-    pending = 0
-    # Match checkbox lines: - [x] or - [ ] at start of line (with optional leading whitespace)
-    pattern = re.compile(r"^\s*[-*]\s*\[([ x])\]")
-
-    for line in content.split("\n"):
-        match = pattern.match(line)
-        if match:
-            if match.group(1) == "x":
-                completed += 1
-            else:
-                pending += 1
-
-    return completed, pending
-
-
-def _list_memory_files() -> list[Path]:
-    """Return sorted list of files in .agent/memory/ directory."""
-    memory_dir = get_agent_dir() / "memory"
-    if not memory_dir.exists():
-        return []
-    return sorted(
-        f.relative_to(memory_dir)
-        for f in memory_dir.rglob("*")
-        if f.is_file()
-    )
-
-
 @cli.command()
 def status():
     """Print a summary of the current agent state."""
-    # Todo counts
-    completed, pending = _count_todos()
+    from sebba_code.helpers.files import list_available_files
 
-    # Memory files
-    memory_files = _list_memory_files()
+    agent_dir = get_agent_dir()
+    memory_dir = agent_dir / "memory"
 
     click.echo("=== Agent Status ===\n")
 
-    # Roadmap section
-    click.echo("Roadmap (.agent/roadmap.md):")
-    if completed == 0 and pending == 0:
-        click.echo("  (no roadmap found)\n")
-    else:
-        click.echo(f"  Completed: {completed}")
-        click.echo(f"  Pending:   {pending}\n")
-
-    # Memory files section
+    # Memory files
     click.echo("Memory Files (.agent/memory/):")
-    if memory_files:
-        for f in memory_files:
-            click.echo(f"  {f}")
+    if memory_dir.exists():
+        memory_files = sorted(
+            f.relative_to(memory_dir)
+            for f in memory_dir.rglob("*")
+            if f.is_file()
+        )
+        if memory_files:
+            for f in memory_files:
+                click.echo(f"  {f}")
+        else:
+            click.echo("  (no memory files)")
     else:
-        click.echo("  (no memory files)")
+        click.echo("  (no memory directory)")
 
-    # Archived roadmaps
-    archive_dir = get_agent_dir() / "roadmaps" / "archive"
-    if archive_dir.exists():
-        archives = sorted(archive_dir.glob("*.md"))
-        if archives:
-            click.echo(f"\nArchived Roadmaps ({len(archives)}):")
-            for a in archives:
-                click.echo(f"  {a.name}")
+    # Sessions
+    session_dir = agent_dir / "sessions"
+    if session_dir.exists():
+        sessions = sorted(session_dir.glob("*.md"))
+        if sessions:
+            click.echo(f"\nSessions ({len(sessions)}):")
+            for s in sessions[-5:]:
+                click.echo(f"  {s.name}")
 
 
 @cli.command()
+@click.argument("request")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-@click.option("--dry-run", is_flag=True, help="Print next roadmap todo and exit")
-@click.option("--debug-prompts", is_flag=True, help="Log prompts and message summaries at each LLM call")
-@click.option("--max-todos", type=int, default=None, help="Override the default session limit of 5 todos")
-def run(verbose: bool, dry_run: bool, debug_prompts: bool, max_todos: int | None):
-    """Execute the agent graph against the current roadmap."""
-    if dry_run:
-        next_todo = _get_next_todo()
-        if next_todo:
-            click.echo(f"Next todo: {next_todo}")
-        else:
-            click.echo("All tasks complete.")
-        return
+@click.option("--debug-prompts", is_flag=True, help="Log prompts and message summaries")
+@click.option("--auto-approve", is_flag=True, help="Skip human approval step")
+def run(request: str, verbose: bool, debug_prompts: bool, auto_approve: bool):
+    """Plan and execute tasks for the given request."""
+    import time
+
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.types import Command
 
     logging.basicConfig(
         level=logging.WARNING,
@@ -180,87 +102,129 @@ def run(verbose: bool, dry_run: bool, debug_prompts: bool, max_todos: int | None
     if debug_prompts:
         set_debug_prompts(True)
         logging.getLogger("sebba_code.debug").setLevel(logging.DEBUG)
+
     _configure_llm_from_config()
 
     from sebba_code.graph import build_agent_graph
 
-    graph = build_agent_graph()
+    checkpointer = MemorySaver()
+    graph = build_agent_graph(checkpointer=checkpointer)
 
-    logger.info("Starting agent...")
-    initial_state = {"messages": []}
-    if max_todos is not None:
-        initial_state["max_todos"] = max_todos
-    result = graph.invoke(initial_state)
+    config = {"configurable": {"thread_id": "main"}}
+    initial_state = {
+        "messages": [],
+        "user_request": request,
+    }
 
-    completed = result.get("todos_completed_this_session", [])
+    logger.info("Starting agent for: %s", request[:80])
+    start_time = time.monotonic()
+
+    # Run graph — will pause at human_approval interrupt
+    for event in graph.stream(initial_state, config=config, stream_mode="updates"):
+        elapsed = time.monotonic() - start_time
+        for node_name, node_output in event.items():
+            if node_name == "plan_draft":
+                click.echo(f"[{elapsed:.1f}s] Planning...")
+            elif node_name == "plan_critique":
+                click.echo(f"[{elapsed:.1f}s] Validating plan...")
+            elif node_name == "build_dag":
+                tasks = node_output.get("tasks", {})
+                click.echo(f"[{elapsed:.1f}s] Built DAG with {len(tasks)} tasks")
+            elif node_name == "human_approval":
+                # Interrupt happened — show plan and get user input
+                pass
+            elif node_name == "dispatch_tasks":
+                click.echo(f"[{elapsed:.1f}s] Dispatching tasks...")
+            elif node_name == "task_worker":
+                click.echo(f"[{elapsed:.1f}s] Task worker completed")
+            elif node_name == "collect_results":
+                click.echo(f"[{elapsed:.1f}s] Collecting results...")
+            elif node_name == "extract_session":
+                click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
+
+    # Check if we're paused at an interrupt
+    graph_state = graph.get_state(config)
+    while graph_state.next:
+        if "human_approval" in graph_state.next:
+            # Show the plan
+            tasks = graph_state.values.get("tasks", {})
+            click.echo("\n=== Execution Plan ===\n")
+            for tid, task in tasks.items():
+                deps = ", ".join(task["depends_on"]) if task["depends_on"] else "none"
+                files = ", ".join(task["target_files"]) if task["target_files"] else "none"
+                click.echo(f"  {tid}: {task['description']}")
+                click.echo(f"    deps: {deps} | files: {files}")
+            click.echo("")
+
+            if auto_approve:
+                response = "yes"
+                click.echo("Auto-approving plan...")
+            else:
+                response = click.prompt(
+                    "Approve? (yes/no or feedback)",
+                    default="yes",
+                )
+
+            # Resume with user response
+            for event in graph.stream(Command(resume=response), config=config, stream_mode="updates"):
+                elapsed = time.monotonic() - start_time
+                for node_name, node_output in event.items():
+                    if node_name == "plan_draft":
+                        click.echo(f"[{elapsed:.1f}s] Re-planning with feedback...")
+                    elif node_name == "dispatch_tasks":
+                        click.echo(f"[{elapsed:.1f}s] Dispatching tasks...")
+                    elif node_name == "task_worker":
+                        click.echo(f"[{elapsed:.1f}s] Task worker completed")
+                    elif node_name == "collect_results":
+                        click.echo(f"[{elapsed:.1f}s] Collecting results...")
+                    elif node_name == "extract_session":
+                        click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
+
+            # Check for more interrupts (re-planning loop)
+            graph_state = graph.get_state(config)
+        else:
+            break
+
+    # Report results
+    final_state = graph.get_state(config)
+    completed = final_state.values.get("tasks_completed_this_session", [])
     if completed:
-        click.echo(f"\nCompleted {len(completed)} todos:")
-        for t in completed:
-            click.echo(f"  - {t}")
+        elapsed = time.monotonic() - start_time
+        click.echo(f"\n[{elapsed:.1f}s] Completed {len(completed)} tasks:")
+        for tid in completed:
+            click.echo(f"  - {tid}")
     else:
-        click.echo("\nNo todos completed this session.")
+        click.echo("\nNo tasks completed this session.")
 
 
 @cli.command()
-@click.argument("title")
-@click.option("--description", "-d", default="", help="Issue description")
-@click.option("--labels", "-l", default="", help="Issue labels")
-@click.option("--refine", is_flag=True, help="Use the planning loop for iterative refinement")
-def seed(title: str, description: str, labels: str, refine: bool):
-    """Seed a roadmap from an issue description.
+@click.argument("request")
+@click.option("--iterations", "-i", type=int, default=None, help="Max planning iterations")
+def plan(request: str, iterations: int | None):
+    """Generate an execution plan without running it.
 
-    Use --refine to enable the planning loop for iterative draft-critique-refine
-    before writing the final roadmap.
-    """
-    _configure_llm_from_config()
-
-    from sebba_code.seed import init_agent_structure, seed_roadmap_from_issue
-
-    # Ensure the agent directory structure exists
-    init_agent_structure()
-
-    if refine:
-        click.echo("Using planning loop for refined roadmap...")
-        seed_roadmap_from_issue(title, description, labels, use_refine=True)
-    else:
-        seed_roadmap_from_issue(title, description, labels, use_refine=False)
-
-    click.echo(f"Roadmap seeded at {get_agent_dir()}/roadmap.md")
-
-
-@cli.command()
-@click.argument("description")
-@click.option("--iterations", "-i", type=int, default=None, help="Override max planning iterations (default: from config)")
-def plan(description: str, iterations: int | None):
-    """Generate a roadmap using the planning loop.
-
-    Takes a natural language description of what you want to build
-    and transforms it into a structured, validated roadmap through
-    an iterative draft-critique-refine cycle.
+    Shows the task DAG for review.
     """
     _configure_llm_from_config()
 
     from sebba_code.seed import init_agent_structure
 
-    # Ensure the agent directory structure exists
     init_agent_structure()
 
-    from sebba_code.plan_graph import build_plan_graph
+    from sebba_code.nodes.approval import build_dag
+    from sebba_code.nodes.planning import plan_critique, plan_draft
 
-    graph = build_plan_graph()
+    config = load_config(get_agent_dir())
+    max_iterations = iterations or config.planning.max_iterations
+    configurable = {"planning_max_iterations": max_iterations}
 
-    logger.info("Starting planning loop...")
-
-    # Build initial state for planning
-    initial_state = {
-        "user_request": description,
-        "draft_roadmap": "",
+    state = {
+        "user_request": request,
+        "draft_plan": "",
         "planning_messages": [],
         "planning_iteration": 0,
         "planning_complete": False,
-        "roadmap": "",
-        "target_files": [],
-        "briefing": "",
+        "rejection_reason": "",
         "memory": {
             "l0_index": "",
             "l1_files": {},
@@ -268,70 +232,44 @@ def plan(description: str, iterations: int | None):
             "active_rules": {},
             "session_history": "",
         },
+        "briefing": "",
     }
 
-    # Get max iterations: CLI arg overrides config, config has its own default of 3
-    max_iterations = iterations
-    planning_model = None
+    click.echo("Drafting plan...")
+    draft_result = plan_draft(state, configurable)
+    state.update(draft_result)
 
-    if iterations is None:
-        # Load from config if CLI didn't override
-        config = load_config(get_agent_dir())
-        max_iterations = config.planning.max_iterations
-        if config.planning.model:
-            planning_model = config.planning.model
+    click.echo("Validating plan...")
+    critique_result = plan_critique(state, configurable)
+    state.update(critique_result)
 
-    # Build configurable dict for graph
-    configurable = {"planning_max_iterations": max_iterations}
-    if planning_model:
-        configurable["planning_model"] = planning_model
+    # Build DAG for display
+    dag_result = build_dag(state)
+    tasks = dag_result.get("tasks", {})
 
-    import time
+    click.echo(f"\n=== Task DAG ({len(tasks)} tasks) ===\n")
+    for tid, task in tasks.items():
+        deps = ", ".join(task["depends_on"]) if task["depends_on"] else "none"
+        files = ", ".join(task["target_files"]) if task["target_files"] else "none"
+        click.echo(f"  {tid}: {task['description']}")
+        click.echo(f"    deps: {deps} | files: {files}")
 
-    iteration = 0
-    start_time = time.monotonic()
+    click.echo(f"\nRaw plan:\n{state['draft_plan']}")
 
-    try:
-        for event in graph.stream(
-            initial_state,
-            config={
-                "recursion_limit": 100 + max_iterations * 10,
-                "configurable": configurable,
-            },
-        ):
-            elapsed = time.monotonic() - start_time
-            for node_name, node_output in event.items():
-                if node_name == "draft_roadmap":
-                    iteration = node_output.get("planning_iteration", 1)
-                    click.echo(f"[{elapsed:.1f}s] Drafting roadmap...")
-                elif node_name == "critique_roadmap":
-                    complete = node_output.get("planning_complete", False)
-                    status = "passed" if complete else "requesting refinement"
-                    click.echo(f"[{elapsed:.1f}s] Critiquing roadmap (iteration {iteration})... {status}")
-                elif node_name == "refine_roadmap":
-                    iteration = node_output.get("planning_iteration", iteration)
-                    click.echo(f"[{elapsed:.1f}s] Refining roadmap (iteration {iteration}/{max_iterations})...")
-                elif node_name == "write_roadmap":
-                    click.echo(f"[{elapsed:.1f}s] Writing final roadmap...")
-    except NotImplementedError as e:
-        click.echo(f"Streaming not supported: {e}")
-        click.echo("Falling back to non-streaming mode...")
 
-        result = graph.invoke(
-            initial_state,
-            config={
-                "recursion_limit": 100 + max_iterations * 10,
-                "configurable": configurable,
-            },
-        )
+@cli.command()
+@click.argument("title")
+@click.option("--description", "-d", default="", help="Issue description")
+@click.option("--labels", "-l", default="", help="Issue labels")
+def seed(title: str, description: str, labels: str):
+    """Seed agent memory from an issue description."""
+    _configure_llm_from_config()
 
-        if result.get("planning_complete"):
-            click.echo(f"\nPlanning complete after {result.get('planning_iteration', '?')} iterations.")
-        if result.get("draft_roadmap"):
-            click.echo(f"Generated roadmap with {len(result['draft_roadmap'])} characters.")
+    from sebba_code.seed import init_agent_structure
 
-    elapsed = time.monotonic() - start_time
-    click.echo(f"[{elapsed:.1f}s] Roadmap created at {get_agent_dir()}/roadmap.md")
+    init_agent_structure()
+    click.echo(f"Initialized {get_agent_dir()}/")
+    click.echo("Use 'sebba-code run' with your request to plan and execute tasks.")
 
 
 if __name__ == "__main__":
