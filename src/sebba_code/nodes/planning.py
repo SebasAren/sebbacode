@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, ToolMessage
+from pydantic import BaseModel
 
 from sebba_code.constants import get_agent_dir
 from sebba_code.helpers.parsing import parse_json
@@ -14,6 +15,25 @@ from sebba_code.planning_prompts import draft_plan_prompt
 from sebba_code.state import AgentState
 
 logger = logging.getLogger("sebba_code")
+
+
+# -- Structured output models for plan generation --
+
+
+class PlanTask(BaseModel):
+    """A single task in the execution plan."""
+
+    id: str
+    description: str
+    depends_on: list[str] = []
+    target_files: list[str] = []
+
+
+class PlanResult(BaseModel):
+    """Structured output for the task plan."""
+
+    tasks: list[PlanTask]
+
 
 # Patterns that indicate an explore/investigation task
 # These tasks should typically be done by the planner directly,
@@ -140,7 +160,10 @@ def plan_draft(state: AgentState, configurable: dict | None = None) -> dict:
         tool_messages = _run_tool_calls_parallel(response.tool_calls, explore_codebase)
         messages.extend(tool_messages)
 
-    draft_content = response.content if hasattr(response, "content") else str(response)
+    # Force structured output to guarantee valid JSON plan
+    llm_structured = llm.with_structured_output(PlanResult)
+    plan_result = llm_structured.invoke(messages)
+    draft_content = plan_result.model_dump_json()
     logger.debug("Generated task plan (%d chars)", len(draft_content))
 
     current = state.get("planning_iteration", 0)
@@ -228,30 +251,32 @@ def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
         logger.info("Max iterations (%d) reached, marking complete", max_iterations)
         return {"planning_complete": True}
 
-    # Basic structure validation
+    # Parse and validate structure
     issues = []
-    if '"tasks"' not in draft and "'tasks'" not in draft:
+    try:
+        parsed = parse_json(draft)
+    except ValueError:
+        issues.append("Plan is not valid JSON")
+        parsed = None
+
+    if parsed is not None and "tasks" not in parsed:
         issues.append("Plan must contain a tasks array")
-    if '"id"' not in draft:
-        issues.append("Tasks must have IDs")
-    if len(draft) < 50:
-        issues.append("Plan content seems too short")
+    if parsed is not None and "tasks" in parsed and not parsed["tasks"]:
+        issues.append("Plan has no tasks")
 
     # File overlap check for parallel tasks
     # Unnecessary delegation check for explore tasks
-    if not issues:
-        parsed = parse_json(draft)
-        if parsed and "tasks" in parsed:
-            overlap_issues = _check_file_overlap(parsed["tasks"])
-            issues.extend(overlap_issues)
+    if not issues and parsed and "tasks" in parsed:
+        overlap_issues = _check_file_overlap(parsed["tasks"])
+        issues.extend(overlap_issues)
 
-            # Check for explore tasks unnecessarily delegated to subagents
-            delegation_flags = _check_unnecessary_delegation(parsed["tasks"])
-            if delegation_flags:
-                issues.append(
-                    f"Explore tasks should be done by the planner directly "
-                    f"(run explore_codebase before creating tasks): {', '.join(delegation_flags)}"
-                )
+        # Check for explore tasks unnecessarily delegated to subagents
+        delegation_flags = _check_unnecessary_delegation(parsed["tasks"])
+        if delegation_flags:
+            issues.append(
+                f"Explore tasks should be done by the planner directly "
+                f"(run explore_codebase before creating tasks): {', '.join(delegation_flags)}"
+            )
 
     if issues:
         logger.debug("Critique found issues: %s", issues)

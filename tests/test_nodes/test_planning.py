@@ -428,13 +428,24 @@ class TestExploreToolPreference:
 
 def _mock_llm_no_tools(monkeypatch, content=SAMPLE_PLAN_JSON):
     """Set up a mock LLM that returns content with no tool calls."""
+    import json
+    from sebba_code.nodes.planning import PlanResult
+
     mock_response = MagicMock()
     mock_response.content = content
     mock_response.tool_calls = None
 
+    # Parse the content to create a real PlanResult for structured output
+    parsed = json.loads(content)
+    plan_result = PlanResult(**parsed)
+
+    mock_structured_llm = MagicMock()
+    mock_structured_llm.invoke.return_value = plan_result
+
     mock_llm = MagicMock()
     mock_llm.bind_tools.return_value = mock_llm
     mock_llm.invoke.return_value = mock_response
+    mock_llm.with_structured_output.return_value = mock_structured_llm
 
     monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
     return mock_llm
@@ -486,6 +497,9 @@ class TestPlanDraft:
 
     def test_draft_executes_tool_calls(self, monkeypatch):
         """When LLM returns tool calls, they should be executed."""
+        import json
+        from sebba_code.nodes.planning import PlanResult
+
         # First response: tool call
         tool_response = MagicMock()
         tool_response.content = ""
@@ -498,9 +512,15 @@ class TestPlanDraft:
         final_response.content = SAMPLE_PLAN_JSON
         final_response.tool_calls = None
 
+        # Structured output mock
+        plan_result = PlanResult(**json.loads(SAMPLE_PLAN_JSON))
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.invoke.return_value = plan_result
+
         mock_llm = MagicMock()
         mock_llm.bind_tools.return_value = mock_llm
         mock_llm.invoke.side_effect = [tool_response, final_response]
+        mock_llm.with_structured_output.return_value = mock_structured_llm
         monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
 
         mock_explore = MagicMock()
@@ -517,11 +537,14 @@ class TestPlanDraft:
             state = _make_state()
             result = plan_draft(state)
 
-        assert result["draft_plan"] == SAMPLE_PLAN_JSON
+        assert "tasks" in result["draft_plan"]
         mock_explore.invoke.assert_called_once_with({"question": "test?"})
 
     def test_draft_includes_explore_directive_in_prompt(self, monkeypatch):
         """Verify the draft prompt includes the explore_codebase directive."""
+        import json
+        from sebba_code.nodes.planning import PlanResult
+
         captured_messages = []
 
         def mock_invoke(messages):
@@ -531,9 +554,14 @@ class TestPlanDraft:
             mock_response.tool_calls = None
             return mock_response
 
+        plan_result = PlanResult(**json.loads(SAMPLE_PLAN_JSON))
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.invoke.return_value = plan_result
+
         mock_llm = MagicMock()
         mock_llm.bind_tools.return_value = mock_llm
         mock_llm.invoke.side_effect = mock_invoke
+        mock_llm.with_structured_output.return_value = mock_structured_llm
         monkeypatch.setattr("sebba_code.nodes.planning.get_llm", lambda **kw: mock_llm)
 
         state = _make_state()

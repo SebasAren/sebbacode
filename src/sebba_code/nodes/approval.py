@@ -18,7 +18,11 @@ def build_dag(state: AgentState) -> dict:
         logger.warning("No draft plan to build DAG from")
         return {"tasks": {}}
 
-    parsed = parse_json(draft)
+    try:
+        parsed = parse_json(draft)
+    except ValueError:
+        logger.error("Could not parse plan JSON: %s", draft[:200])
+        return {"tasks": {}}
     task_list = parsed.get("tasks", [])
 
     tasks: dict[str, Task] = {}
