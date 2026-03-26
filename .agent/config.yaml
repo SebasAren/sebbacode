@@ -15,11 +15,6 @@ loading:
   l2_max_tokens: 4000
   max_total_context: 12000
 
-gcc:
-  max_main_md_lines: 60
-  k: 1
-  archive_on_complete: true
-
 explorer:
   bootstrap_on_empty: true
   validate_new_roadmaps: true
