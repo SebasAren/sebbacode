@@ -17,9 +17,10 @@ def mock_invoke_with_timeout():
     Tests that need specific LLM responses should patch as needed within their test.
     """
     mock_response = MagicMock()
-    mock_response.content = "Mocked summary with enough words for validation here."
-    
-    with patch("sebba_code.llm.invoke_with_timeout", return_value=mock_response):
+    mock_response.content = "Mocked summary with enough words to pass the validation check for testing purposes."
+
+    with patch("sebba_code.memory.summarize.invoke_with_timeout", return_value=mock_response), \
+         patch("sebba_code.memory.summarize.get_cheap_llm", return_value=MagicMock()):
         yield
 
 

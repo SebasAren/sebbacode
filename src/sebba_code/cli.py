@@ -105,6 +105,8 @@ def run(request: str, verbose: bool, debug_prompts: bool, auto_approve: bool):
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command
 
+    from sebba_code.display import RichDisplay
+
     logging.basicConfig(
         level=logging.WARNING,
         format="%(asctime)s [%(name)s] %(message)s",
@@ -132,86 +134,52 @@ def run(request: str, verbose: bool, debug_prompts: bool, auto_approve: bool):
     logger.info("Starting agent for: %s", request[:80])
     start_time = time.monotonic()
 
-    # Run graph — will pause at human_approval interrupt
-    for event in graph.stream(initial_state, config=config, stream_mode="updates"):
-        elapsed = time.monotonic() - start_time
-        for node_name, node_output in event.items():
-            if node_name == "plan_draft":
-                click.echo(f"[{elapsed:.1f}s] Planning...")
-            elif node_name == "plan_critique":
-                click.echo(f"[{elapsed:.1f}s] Validating plan...")
-            elif node_name == "build_dag":
-                tasks = node_output.get("tasks", {})
-                click.echo(f"[{elapsed:.1f}s] Built DAG with {len(tasks)} tasks")
-            elif node_name == "human_approval":
-                # Interrupt happened — show plan and get user input
-                pass
-            elif node_name == "dispatch_tasks":
-                click.echo(f"[{elapsed:.1f}s] Dispatching tasks...")
-            elif node_name == "task_worker":
-                click.echo(f"[{elapsed:.1f}s] Task worker completed")
-            elif node_name == "collect_results":
-                click.echo(f"[{elapsed:.1f}s] Collecting results...")
-                if "tasks" in node_output:
-                    click.echo(format_dag(node_output["tasks"]))
-            elif node_name == "extract_session":
-                click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
+    stream_kwargs = dict(
+        config=config,
+        stream_mode=["updates", "messages"],
+        subgraphs=True,
+    )
 
-    # Check if we're paused at an interrupt
-    graph_state = graph.get_state(config)
-    while graph_state.next:
-        if "human_approval" in graph_state.next:
-            # Show the plan
-            tasks = graph_state.values.get("tasks", {})
-            click.echo("\n=== Execution Plan ===\n")
-            for tid, task in tasks.items():
-                deps = ", ".join(task["depends_on"]) if task["depends_on"] else "none"
-                files = ", ".join(task["target_files"]) if task["target_files"] else "none"
-                click.echo(f"  {tid}: {task['description']}")
-                click.echo(f"    deps: {deps} | files: {files}")
-            click.echo("")
+    with RichDisplay(verbose=verbose) as display:
+        # Run graph — will pause at human_approval interrupt
+        for chunk in graph.stream(initial_state, **stream_kwargs):
+            display.handle_stream_event(chunk)
 
-            if auto_approve:
-                response = "yes"
-                click.echo("Auto-approving plan...")
+        # Check if we're paused at an interrupt
+        graph_state = graph.get_state(config)
+        while graph_state.next:
+            if "human_approval" in graph_state.next:
+                display.pause()
+
+                # Show the plan
+                tasks = graph_state.values.get("tasks", {})
+                display.show_plan(tasks)
+
+                if auto_approve:
+                    response = "yes"
+                    display.console.print("[bold green]Auto-approving plan...[/]")
+                else:
+                    response = click.prompt(
+                        "Approve? (yes/no or feedback)",
+                        default="yes",
+                    )
+
+                display.resume()
+
+                # Resume with user response
+                for chunk in graph.stream(Command(resume=response), **stream_kwargs):
+                    display.handle_stream_event(chunk)
+
+                # Check for more interrupts (re-planning loop)
+                graph_state = graph.get_state(config)
             else:
-                response = click.prompt(
-                    "Approve? (yes/no or feedback)",
-                    default="yes",
-                )
+                break
 
-            # Resume with user response
-            for event in graph.stream(Command(resume=response), config=config, stream_mode="updates"):
-                elapsed = time.monotonic() - start_time
-                for node_name, node_output in event.items():
-                    if node_name == "plan_draft":
-                        click.echo(f"[{elapsed:.1f}s] Re-planning with feedback...")
-                    elif node_name == "dispatch_tasks":
-                        click.echo(f"[{elapsed:.1f}s] Dispatching tasks...")
-                    elif node_name == "task_worker":
-                        click.echo(f"[{elapsed:.1f}s] Task worker completed")
-                    elif node_name == "collect_results":
-                        click.echo(f"[{elapsed:.1f}s] Collecting results...")
-                        if "tasks" in node_output:
-                            click.echo(format_dag(node_output["tasks"]))
-                    elif node_name == "extract_session":
-                        click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
-
-            # Check for more interrupts (re-planning loop)
-            graph_state = graph.get_state(config)
-        else:
-            break
-
-    # Report results
+    # Report results (after Live context exits)
     final_state = graph.get_state(config)
     completed = final_state.values.get("tasks_completed_this_session", [])
-    if completed:
-        elapsed = time.monotonic() - start_time
-        click.echo(f"\n[{elapsed:.1f}s] Completed {len(completed)} tasks:")
-        for tid in completed:
-            click.echo(f"  - {tid}")
-    else:
-        click.echo("\nNo tasks completed this session.")
+    elapsed = time.monotonic() - start_time
+    display.show_final_report(completed, elapsed)
 
 
 @cli.command()

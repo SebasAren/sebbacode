@@ -83,7 +83,7 @@ class TestExtractionSummarizationFlow(TestCase):
     def test_multiple_extractions_same_session(self, mock_invoke):
         """Multiple extractions in same session should all be processed."""
         mock_response = MagicMock()
-        mock_response.content = "Summary with enough words for validation here."
+        mock_response.content = "Summary with enough words to pass the validation check for testing purposes."
         mock_invoke.return_value = mock_response
 
         # First extraction
@@ -142,7 +142,7 @@ class TestHookToSummarizationFlow(TestCase):
     def test_hook_with_multiple_entries(self, mock_invoke):
         """Hook should process all provided entries."""
         mock_response = MagicMock()
-        mock_response.content = "Summary with enough words for validation here."
+        mock_response.content = "Summary with enough words to pass the validation check for testing purposes."
         mock_invoke.return_value = mock_response
 
         result = post_extraction_hook(
@@ -253,14 +253,14 @@ class TestErrorRecoveryFlow(TestCase):
         """If one entry fails, others should still be processed."""
         # First call succeeds, second fails
         mock_responses = [
-            MagicMock(content="First summary with enough words for validation here."),
+            MagicMock(content="First summary with enough words to pass the validation check for testing purposes."),
             Exception("LLM error"),
         ]
         mock_invoke.side_effect = mock_responses
 
-        cfg = MemoryLayerConfig()
+        cfg = MemoryLayerConfig(max_summarization_retries=0)
         layer = MemoryLayer(memory_root=self.tmp, config=cfg)
-        
+
         # Two entries that both need LLM
         entries = [
             L2Entry(key="a", topic="batch", content="A" * 300, file="batch/a.md", created_at=_now()),
@@ -315,8 +315,8 @@ class TestTopicIsolation(TestCase):
         # Two entries for different topics
         result = post_extraction_hook(
             [
-                {"content": "Content for topic X consolidation testing here.", "file": "x/entry.md"},
-                {"content": "Content for topic Y consolidation testing here.", "file": "y/entry.md"},
+                {"content": "Content for topic X consolidation testing here with extra words.", "file": "x/entry.md"},
+                {"content": "Content for topic Y consolidation testing here with extra words.", "file": "y/entry.md"},
             ],
             layer=self.layer,
             background=False,

@@ -5,6 +5,8 @@ from datetime import datetime, UTC
 from pathlib import Path
 from unittest import TestCase
 
+import pytest
+
 from sebba_code.memory.layers import (
     L1Summary,
     L2Entry,
@@ -129,6 +131,7 @@ class TestSummarizeL2ToL1(TestCase):
         self.assertEqual(result.summary, content.strip())
         self.assertEqual(result.version, 1)
 
+    @pytest.mark.integration
     def test_summary_written_to_l1_file(self):
         """Summarization result should be written to L1 file (via real LLM)."""
         entry = self._make_l2_entry("X" * 300)
@@ -229,6 +232,7 @@ class TestSummariseAndWriteIntegration(TestCase):
         )
         self.assertIsNone(result)
 
+    @pytest.mark.integration
     def test_full_pipeline_long_content(self):
         """Long content: L2 written, L1 summarized (via real LLM)."""
         layer = MemoryLayer(memory_root=self.tmp)
@@ -306,7 +310,7 @@ class TestBackgroundSummarization(TestCase):
     def test_background_returns_future(self):
         """background=True should return a Future."""
         future = post_extraction_hook(
-            [{"content": "Background test content for async execution here.", "file": "async/test.md"}],
+            [{"content": "Background test content for async execution here with extra padding.", "file": "async/test.md"}],
             layer=self.layer,
             background=True,
             consolidate=False,
@@ -322,7 +326,7 @@ class TestBackgroundSummarization(TestCase):
         
         start = time.time()
         future = post_extraction_hook(
-            [{"content": "Timing test content for background execution here.", "file": "timing/test.md"}],
+            [{"content": "Timing test content for background execution here with extra padding.", "file": "timing/test.md"}],
             layer=self.layer,
             background=True,
             consolidate=False,
@@ -392,10 +396,9 @@ class TestSummarizationEdgeCases(TestCase):
             created_at=_now(),
         )
         
-        # Verify L2 was written
         result = summarise_l2_to_l1(entry, layer=self.layer)
         self.assertIsNotNone(result)
-        
-        # Verify file exists
-        l2_file = self.tmp / "special"
-        self.assertTrue(l2_file.is_dir())
+
+        # Verify L1 file was written
+        l1_file = self.tmp / "special.md"
+        self.assertTrue(l1_file.is_file())
