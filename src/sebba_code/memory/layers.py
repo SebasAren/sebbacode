@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, UTC
@@ -36,10 +37,10 @@ class MemoryLayerConfig:
     max_l2_length_for_summary: int = 8000
 
     # Maximum number of retry attempts when L1 summarisation fails.
-    max_summarization_retries: int = 2
+    max_summarization_retries: int = 1
 
     # Base backoff delay (seconds) between retry attempts.
-    summarization_retry_base_delay: float = 2.0
+    summarization_retry_base_delay: float = 1.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -103,6 +104,20 @@ def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
+def _sanitize_stem(name: str) -> Optional[str]:
+    """Sanitize a suggested filename stem for safe filesystem use.
+
+    Returns None if the name is unusable (empty or all special chars).
+    """
+    # Strip directory components and extension
+    stem = Path(name).stem
+    # Replace unsafe characters with hyphens
+    stem = re.sub(r'[^\w\-]', '-', stem)
+    # Collapse multiple hyphens
+    stem = re.sub(r'-+', '-', stem).strip('-')
+    return stem.lower() if stem else None
+
+
 def topic_from_path(relative_path: str) -> str:
     """Derive a short human-readable topic from a memory file path."""
     stem = Path(relative_path).stem
@@ -144,6 +159,7 @@ class MemoryLayer:
         content: str,
         topic: str,
         *,
+        suggested_name: Optional[str] = None,
         skip_if_short: bool = True,
     ) -> Optional[L2Entry]:
         """Write a detailed L2 entry to disk.
@@ -152,6 +168,12 @@ class MemoryLayer:
         skipped (content too short or already exists unchanged).
 
         Idempotent: writing the same content twice will not create duplicates.
+
+        Parameters
+        ----------
+        suggested_name:
+            Human-readable filename stem (e.g. ``"cli-state-flow"``).
+            Falls back to a content hash when not provided or unusable.
         """
         if skip_if_short and len(content) < self.config.min_l2_length_to_write:
             logger.debug(
@@ -164,13 +186,26 @@ class MemoryLayer:
         l2_dir = self.memory_root / topic
         l2_dir.mkdir(parents=True, exist_ok=True)
 
-        # Check for an identical entry already on disk (idempotency guard)
-        candidate_file = l2_dir / f"{key}.md"
+        # Idempotency: check if exact content already exists anywhere in the topic dir
+        for existing_file in l2_dir.glob("*.md"):
+            try:
+                if existing_file.read_text().strip() == content.strip():
+                    logger.debug("L2 entry already exists at %s, skipping", existing_file)
+                    return None
+            except Exception:
+                continue
+
+        # Determine filename: prefer suggested_name, fall back to hash
+        stem = _sanitize_stem(suggested_name) if suggested_name else None
+        if not stem:
+            stem = key
+
+        candidate_file = l2_dir / f"{stem}.md"
+
+        # Handle name collisions: append short hash suffix if file exists with different content
         if candidate_file.exists():
-            existing = candidate_file.read_text()
-            if existing.strip() == content.strip():
-                logger.debug("L2 entry already exists for key=%s, skipping", key)
-                return None
+            stem = f"{stem}-{key[:6]}"
+            candidate_file = l2_dir / f"{stem}.md"
 
         file_path = candidate_file
         file_path.write_text(content)

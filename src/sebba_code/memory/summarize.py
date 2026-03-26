@@ -74,7 +74,7 @@ def summarise_l2_to_l1(
     l2_entry: L2Entry,
     layer: Optional[MemoryLayer] = None,
     config: Optional[MemoryLayerConfig] = None,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 30,
 ) -> Optional[L1Summary]:
     """Summarise a single L2 entry and write the resulting L1 file.
 
@@ -164,7 +164,7 @@ def summarise_topic_to_l1(
     topic: str,
     layer: Optional[MemoryLayer] = None,
     config: Optional[MemoryLayerConfig] = None,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 30,
 ) -> list[L1Summary]:
     """Load all L2 entries for *topic* and produce a single consolidated L1.
 

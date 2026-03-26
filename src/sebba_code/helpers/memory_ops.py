@@ -51,11 +51,17 @@ def apply_memory_updates(updates: list[dict]) -> None:
         if action in ("update_index", "append_rules"):
             continue
 
-        # Derive topic from the file key (memory/architecture.md → architecture)
+        # Derive topic from directory part, suggested_name from filename stem
+        # e.g. "architecture/example.md" → topic="architecture", name="example"
         file_key = update.get("file", "session")
-        topic = Path(file_key).stem or "session"
+        file_path = Path(file_key)
+        if file_path.parent != Path("."):
+            topic = str(file_path.parent)
+        else:
+            topic = file_path.stem or "session"
+        suggested_name = file_path.stem if file_path.stem else None
 
-        layer.write_l2(content, topic)
+        layer.write_l2(content, topic, suggested_name=suggested_name)
 
     logger = __import__("logging").getLogger("sebba_code")
     logger.debug("apply_memory_updates: wrote %d L2 entries (L1 via async hook)", len(updates))

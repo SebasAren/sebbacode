@@ -1,6 +1,7 @@
 """Planning loop nodes for the agent graph."""
 
 import logging
+import re
 from typing import Literal
 
 from sebba_code.constants import get_agent_dir
@@ -10,6 +11,25 @@ from sebba_code.planning_prompts import draft_plan_prompt
 from sebba_code.state import AgentState
 
 logger = logging.getLogger("sebba_code")
+
+# Patterns that indicate an explore/investigation task
+# These tasks should typically be done by the planner directly,
+# not delegated to subagents
+EXPLORE_PATTERNS = [
+    r"\bexplore\b",
+    r"\binvestigate\b",
+    r"\bfind\s+(where|what|how|which|whether)\b",
+    r"\bdiscover\b",
+    r"\bunderstand\b",
+    r"\banalyze\s+(codebase|existing|structure|patterns)\b",
+    r"\bcheck\s+(existing|where|how)\b",
+    r"\blook\s+(at|into)\b",
+    r"\bexamine\b",
+    r"\blocate\b",
+    r"\bidentify\s+(where|what|which)\b",
+    r"\bsee\s+(how|what|where)\b",
+    r"\bexplore\s+(how|what|where)\b",
+]
 
 
 def is_planning_complete(state: AgentState) -> Literal["yes", "no"]:
@@ -119,6 +139,34 @@ def _check_file_overlap(tasks: list[dict]) -> list[str]:
     return issues
 
 
+def _is_explore_task(description: str) -> bool:
+    """Check if a task description describes an explore/investigation task.
+
+    Explore tasks should typically be done by the planner directly before
+    creating subagent tasks, not delegated to subagents.
+    """
+    desc_lower = description.lower()
+    for pattern in EXPLORE_PATTERNS:
+        if re.search(pattern, desc_lower):
+            return True
+    return False
+
+
+def _check_unnecessary_delegation(tasks: list[dict]) -> list[str]:
+    """Identify explore tasks that were delegated to subagents but should have been done by the planner.
+
+    Per the planning directive, the planner should run explore_codebase directly
+    before creating subagent tasks. Tasks that are themselves explore/investigate
+    tasks indicate the planner may have skipped this step.
+    """
+    flagged = []
+    for task in tasks:
+        description = task.get("description", "")
+        if _is_explore_task(description):
+            flagged.append(task["id"])
+    return flagged
+
+
 def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
     """Validate the draft plan structure, quality, and parallel-safety."""
     draft = state.get("draft_plan", "")
@@ -139,11 +187,20 @@ def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
         issues.append("Plan content seems too short")
 
     # File overlap check for parallel tasks
+    # Unnecessary delegation check for explore tasks
     if not issues:
         parsed = parse_json(draft)
         if parsed and "tasks" in parsed:
             overlap_issues = _check_file_overlap(parsed["tasks"])
             issues.extend(overlap_issues)
+
+            # Check for explore tasks unnecessarily delegated to subagents
+            delegation_flags = _check_unnecessary_delegation(parsed["tasks"])
+            if delegation_flags:
+                issues.append(
+                    f"Explore tasks should be done by the planner directly "
+                    f"(run explore_codebase before creating tasks): {', '.join(delegation_flags)}"
+                )
 
     if issues:
         logger.debug("Critique found issues: %s", issues)

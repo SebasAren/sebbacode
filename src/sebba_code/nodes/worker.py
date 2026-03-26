@@ -429,7 +429,7 @@ def worker_summarize(state: WorkerState) -> dict:
                 f' "files_touched": "comma-separated files modified (or empty string)"}}'
             )
             logger.info("worker_summarize: calling cheap LLM for task %s", task["id"])
-            response = invoke_with_timeout(get_cheap_llm(), prompt)
+            response = invoke_with_timeout(get_cheap_llm(), prompt, timeout_seconds=45)
             logger.info("worker_summarize: LLM responded for task %s", task["id"])
             result = parse_json(response.content)
             if result:

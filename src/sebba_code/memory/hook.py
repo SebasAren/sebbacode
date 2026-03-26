@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -142,11 +142,28 @@ def post_extraction_hook(
         results: list[L1Summary] = []
         if consolidate:
             results.extend(summarise_topic_to_l1(topic_for_summary, layer=ml, config=cfg))
+        elif len(entries) == 1:
+            result = summarise_l2_to_l1(entries[0], layer=ml, config=cfg)
+            if result:
+                results.append(result)
         else:
-            for entry in entries:
-                result = summarise_l2_to_l1(entry, layer=ml, config=cfg)
-                if result:
-                    results.append(result)
+            # Parallelize across entries to reduce wall-clock time
+            with ThreadPoolExecutor(max_workers=min(len(entries), 4)) as pool:
+                futures = {
+                    pool.submit(summarise_l2_to_l1, entry, ml, cfg): entry
+                    for entry in entries
+                }
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result:
+                            results.append(result)
+                    except Exception as exc:
+                        entry = futures[future]
+                        logger.warning(
+                            "L1 summarisation failed for key=%s: %s",
+                            entry.key, exc,
+                        )
         return results
 
     if background:

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from sebba_code.memory.hook import post_extraction_hook
 from sebba_code.state import AgentState
 
 logger = logging.getLogger("sebba_code")
+
+_SUMMARIZE_OVERALL_TIMEOUT = 90  # seconds
 
 
 def summarize_to_l1(state: AgentState) -> dict:
@@ -44,17 +47,21 @@ def summarize_to_l1(state: AgentState) -> dict:
     )
 
     try:
-        # Run synchronously (background=False) so L1 is fully written
-        # before the graph reaches END.
-        future_or_results = post_extraction_hook(
-            l2_entries=l2_entries,
-            topic="session",
-            background=False,  # synchronous: wait for completion
-            consolidate=False,  # one summary per L2 entry
-        )
+        # Run in a guarded thread so we can enforce an overall timeout
+        # and never block the graph indefinitely.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                post_extraction_hook,
+                l2_entries=l2_entries,
+                topic="session",
+                background=False,
+                consolidate=False,
+            )
+            summaries = future.result(timeout=_SUMMARIZE_OVERALL_TIMEOUT)
 
         # If background=False, returns the list directly
-        summaries = future_or_results if isinstance(future_or_results, list) else []
+        if not isinstance(summaries, list):
+            summaries = []
         logger.info(
             "summarize_to_l1: wrote %d L1 summary(ies)",
             len(summaries),
@@ -64,6 +71,12 @@ def summarize_to_l1(state: AgentState) -> dict:
             "l1_summaries": [s.to_dict() for s in summaries],
         }
 
+    except FuturesTimeout:
+        logger.warning(
+            "summarize_to_l1: overall timeout (%ds) exceeded — continuing to END",
+            _SUMMARIZE_OVERALL_TIMEOUT,
+        )
+        return {}
     except Exception as exc:
         # Never let summarisation failure crash the graph.
         logger.warning(

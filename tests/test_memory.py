@@ -62,7 +62,7 @@ class TestMemoryLayerConfig(TestCase):
         cfg = MemoryLayerConfig()
         self.assertEqual(cfg.min_l2_length_to_write, 50)
         self.assertEqual(cfg.min_l2_length_for_summary, 400)
-        self.assertEqual(cfg.max_summarization_retries, 2)
+        self.assertEqual(cfg.max_summarization_retries, 1)
 
 
 class TestMemoryLayer(TestCase):
@@ -364,10 +364,9 @@ class TestSummariseAndWrite(TestCase):
     @patch("sebba_code.memory.summarize.get_cheap_llm")
     def test_summarise_and_write_retries_on_invalid_output(self, mock_llm):
         """If LLM returns empty/garbage, retries up to max_retries then returns None."""
-        # Exhaustively mock 3 invoke() calls (initial + 2 retries).
+        # Exhaustively mock 2 invoke() calls (initial + 1 retry).
         # Each returns an empty string, which fails _is_valid_summary.
         mock_llm.return_value.invoke.side_effect = [
-            MagicMock(content=""),
             MagicMock(content=""),
             MagicMock(content=""),
         ]
@@ -383,6 +382,6 @@ class TestSummariseAndWrite(TestCase):
             layer=layer,
         )
 
-        # After 3 invalid responses all retries are exhausted → returns None
+        # After 2 invalid responses all retries are exhausted → returns None
         self.assertIsNone(result)
-        self.assertEqual(mock_llm.return_value.invoke.call_count, 3)
+        self.assertEqual(mock_llm.return_value.invoke.call_count, 2)

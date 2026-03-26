@@ -87,8 +87,16 @@ def extract_session(state: AgentState) -> dict:
 
 
 def _topic_from_file(file: str) -> str:
-    """Derive a topic label from a memory file path."""
+    """Derive a topic label from a memory file path.
+
+    Uses the directory part as topic (consistent with memory_ops.py).
+    E.g. ``"architecture/example.md"`` → ``"architecture"``.
+    Falls back to the filename stem when there is no directory.
+    """
     if not file:
         return "session"
-    stem = os.path.splitext(os.path.basename(file))[0]
-    return stem.replace("_", " ").replace("-", " ").title() or "session"
+    from pathlib import Path
+    file_path = Path(file)
+    if file_path.parent != Path("."):
+        return str(file_path.parent)
+    return file_path.stem or "session"
