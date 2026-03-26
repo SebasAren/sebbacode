@@ -84,15 +84,18 @@ def collect_results(state: AgentState) -> Command[Literal["dispatch_tasks", "ext
 
     for result in results:
         tid = result["task_id"]
-        if tid in tasks:
+        if tid in tasks and tasks[tid]["status"] != "done":
             tasks[tid]["status"] = "done"
             tasks[tid]["result_summary"] = result["summary"]
             if result.get("files_touched"):
                 tasks[tid]["files_touched"] = result["files_touched"].split(", ") if isinstance(result["files_touched"], str) else result["files_touched"]
             completed_ids.append(tid)
 
-    # Apply DAG mutations from workers
+    # Apply DAG mutations from workers (only for newly completed tasks)
+    completed_set = set(completed_ids)
     for result in results:
+        if result["task_id"] not in completed_set:
+            continue
         for mutation in result.get("dag_mutations", []):
             if mutation["type"] == "add_blocking_task":
                 new_id = mutation.get("new_task_id", f"task-{uuid.uuid4().hex[:6]}")

@@ -46,3 +46,16 @@ When adding features or making architectural changes:
 **Major discrepancy categories**: new features/commands, removed features, architectural refactors (e.g., LangGraph state replacement of file-based state)
 ### Phase Tracking Lesson
 Mark audit/identification todos complete only when that phase is done. Clearly separate 'identify discrepancies' from 'implement fixes'. In this session, 'update feature descriptions' was incorrectly marked complete when only the audit was finished.
+## README Audit Process
+1. Read git log for recent commits
+2. Read corresponding source files to verify actual features
+3. Read existing README to identify gaps
+4. Note: audit report file may not exist at expected path - proceed with source file analysis
+5. Update README with discovered discrepancies
+6. Verify with markdown checks (structure + formatting)
+
+## Common Undocumented Features
+- Non-existent tool references (listed in README but not in code)
+- Missing environment variable documentation
+- Planning mode features
+- Tool renames and removals

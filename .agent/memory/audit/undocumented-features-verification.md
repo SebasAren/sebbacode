@@ -246,3 +246,15 @@ The prior audit's undocumented features have been substantially addressed:
 - **3 minor discrepancies identified** (discover_files, worker docs, config completeness)
 
 The codebase is in good shape with documentation closely matching implementation. The discrepancies noted above are minor and don't affect core functionality.
+
+## Commits Referenced
+- pl-planning/GCC-refactor commits identified undocumented features
+
+## Verified Undocumented Features
+1. **Planning mode** - exists in code but not fully documented
+2. **Tool renames** - some tools were renamed without README updates
+3. **GCC removal** - GCC-related functionality removed in refactor
+
+## Audit Method
+git log → source files comparison → flag undocumented features
+Priority: operational modules (nodes, helpers, workers) over documentation files

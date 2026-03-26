@@ -12,8 +12,9 @@ Planning loop (full cycle): draft_roadmap → critique_roadmap → refine_roadma
 Draft runs IN STATE, not on disk - roadmap stored in graph state until planning_complete, then written to .agent/roadmap.md
 Post-execution: finalize_todo creates TodoSummary in state → extract_session reads summaries from state → distills into lasting memory/rules
 Completed roadmaps are archived to .agent/roadmaps/archive/{date}-{slug}.md
-README audit: git log → source files comparison → flag undocumented features (worktree, LangGraph, Python-only, tools)
+README audit: commits → source files → flag discrepancies by severity (HIGH/MEDIUM/LOW); separate audit from fix phase
 ## README Maintenance Pattern / Audit: git commits → source files → structural gaps, not formatting
 architecture/README-structure.md: README reorganization: Architecture → Installation → CLI Reference. Maintenance: audit commits → examine source → identify discrepancies → update.
-Audit vs update phases must be tracked separately - don't mark fixes done when only audit is complete
+Audit vs update phases must be tracked separately; audit discovers, update applies fixes. README: audit commits → examine source → identify discrepancies → update → verify with markdown checks (README audit task)
 Undocumented features found: planning mode, tool renames, GCC removal (pl-planning/GCC-refactor commits)
+audit/undocumented-features-verification.md: # Audit Report: Undocumented Features Verification / **Date**: 2026-03-26 / **Auditor**: Source Code Audit / Undocumented: planning mode, tool renames, GCC removal (pl-planning/GCC-refactor commits)

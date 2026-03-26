@@ -10,6 +10,19 @@ from sebba_code.constants import get_agent_dir, init_agent_dir, set_debug_prompt
 
 logger = logging.getLogger("sebba_code")
 
+STATUS_ICONS = {"done": "\u2713", "running": "\u25b6", "pending": "\u00b7", "blocked": "\u2717"}
+
+
+def format_dag(tasks: dict) -> str:
+    """Format the task DAG as a compact status table."""
+    lines = []
+    for tid, task in tasks.items():
+        icon = STATUS_ICONS.get(task["status"], "?")
+        deps = ", ".join(task["depends_on"]) if task["depends_on"] else ""
+        dep_str = f"  (deps: {deps})" if deps else ""
+        lines.append(f"  {icon} {tid}: {task['description']}{dep_str}")
+    return "\n".join(lines)
+
 
 @click.group()
 @click.option("--agent-dir", default=".agent", help="Path to .agent directory")
@@ -139,6 +152,8 @@ def run(request: str, verbose: bool, debug_prompts: bool, auto_approve: bool):
                 click.echo(f"[{elapsed:.1f}s] Task worker completed")
             elif node_name == "collect_results":
                 click.echo(f"[{elapsed:.1f}s] Collecting results...")
+                if "tasks" in node_output:
+                    click.echo(format_dag(node_output["tasks"]))
             elif node_name == "extract_session":
                 click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
 
@@ -177,6 +192,8 @@ def run(request: str, verbose: bool, debug_prompts: bool, auto_approve: bool):
                         click.echo(f"[{elapsed:.1f}s] Task worker completed")
                     elif node_name == "collect_results":
                         click.echo(f"[{elapsed:.1f}s] Collecting results...")
+                        if "tasks" in node_output:
+                            click.echo(format_dag(node_output["tasks"]))
                     elif node_name == "extract_session":
                         click.echo(f"[{elapsed:.1f}s] Extracting session memory...")
 
