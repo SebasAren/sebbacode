@@ -450,7 +450,109 @@ def worker_summarize(state: WorkerState) -> dict:
         files_touched=files_touched,
         dag_mutations=dag_mutations,
         memory_updates={},
+        commit_sha="",
     )
+
+    return {"task_result": task_result}
+
+
+def _should_commit(state: WorkerState) -> str:
+    """Route after summarize: commit_changes or extract_memory."""
+    from sebba_code.config import load_config
+
+    try:
+        config = load_config(get_agent_dir())
+        mode = config.execution.auto_commit
+    except Exception:
+        mode = "auto"
+
+    if mode == "never":
+        return "extract_memory"
+
+    task_result = state.get("task_result")
+    if not task_result:
+        return "extract_memory"
+
+    # Don't commit if task was blocked
+    for m in task_result.get("dag_mutations", []):
+        if m.get("type") == "add_blocking_task":
+            return "extract_memory"
+
+    if mode == "always":
+        return "commit_changes"
+
+    # "auto": commit if files were touched
+    if task_result.get("files_touched", "").strip():
+        return "commit_changes"
+
+    return "extract_memory"
+
+
+def worker_commit_changes(state: WorkerState) -> dict:
+    """Commit the worker's changes using a conventional commit message."""
+    from sebba_code.helpers.git import git_run
+    from sebba_code.helpers.git_commit import make_commit
+
+    task_result = state.get("task_result")
+    if not task_result:
+        return {}
+
+    task = state["task"]
+    files_touched_str = task_result.get("files_touched", "")
+    files = [f.strip() for f in files_touched_str.split(",") if f.strip()]
+
+    # Fallback: detect via git diff
+    if not files:
+        diff_result = git_run(["diff", "--name-only"])
+        if diff_result.stdout.strip():
+            files = diff_result.stdout.strip().splitlines()
+        else:
+            logger.info("worker_commit: no changed files detected, skipping")
+            return {"task_result": task_result}
+
+    # Generate commit message via cheap LLM
+    summary = task_result.get("summary", task["description"])
+    try:
+        prompt = (
+            f"Generate a conventional commit classification for this change.\n\n"
+            f"Task: {task['description']}\n"
+            f"Summary: {summary}\n"
+            f"Files: {', '.join(files)}\n\n"
+            f'Respond with JSON: {{"type": "feat|fix|docs|refactor|test|chore", '
+            f'"scope": "optional short scope", "description": "imperative mood, under 72 chars"}}'
+        )
+        response = invoke_with_timeout(get_cheap_llm(), prompt)
+        commit_info = parse_json(response.content)
+    except Exception:
+        logger.warning("worker_commit: LLM commit message generation failed, using fallback")
+        commit_info = None
+
+    if commit_info:
+        try:
+            message = make_commit(
+                commit_type=commit_info.get("type", "chore"),
+                description=commit_info.get("description", summary[:72]),
+                scope=commit_info.get("scope", ""),
+            )
+        except ValueError:
+            message = f"chore: {summary[:72]}"
+    else:
+        message = f"chore: {summary[:72]}"
+
+    # Stage and commit
+    for f in files:
+        git_run(["add", f])
+
+    result = git_run(["commit", "-m", message])
+
+    if result.returncode == 0:
+        sha_result = git_run(["rev-parse", "--short", "HEAD"])
+        sha = sha_result.stdout.strip()
+        logger.info("worker_commit: committed %s for task %s", sha, task["id"])
+        task_result["commit_sha"] = sha
+    else:
+        logger.warning("worker_commit: git commit failed: %s", result.stderr or result.stdout)
+        task_result["commit_sha"] = ""
 
     return {"task_result": task_result}
 
@@ -534,7 +636,7 @@ Rules:
 
 
 def build_task_worker():
-    """Build the task worker subgraph: recon → rules → context → LLM loop → summarize → extract."""
+    """Build the task worker subgraph: recon → rules → context → LLM loop → summarize → [commit] → extract."""
     tools = get_worker_tools()
 
     # Inner LLM tool-calling loop
@@ -561,6 +663,7 @@ def build_task_worker():
     graph.add_node("deepen_context", worker_deepen_context)
     graph.add_node("llm_loop", _safe_llm_loop)
     graph.add_node("summarize", worker_summarize)
+    graph.add_node("commit_changes", worker_commit_changes)
     graph.add_node("extract_memory", worker_extract_memory)
 
     graph.set_entry_point("recon")
@@ -568,7 +671,8 @@ def build_task_worker():
     graph.add_edge("match_rules", "deepen_context")
     graph.add_edge("deepen_context", "llm_loop")
     graph.add_edge("llm_loop", "summarize")
-    graph.add_edge("summarize", "extract_memory")
+    graph.add_conditional_edges("summarize", _should_commit)
+    graph.add_edge("commit_changes", "extract_memory")
     graph.add_edge("extract_memory", END)
 
     return graph.compile()

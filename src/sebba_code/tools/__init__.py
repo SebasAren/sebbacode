@@ -50,5 +50,4 @@ def get_worker_tools() -> list:
         signal_blocked,
         add_subtask,
         memory_query,
-        git_commit,
     ]

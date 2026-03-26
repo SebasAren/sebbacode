@@ -62,6 +62,7 @@ class TaskResult(TypedDict):
     files_touched: str
     dag_mutations: list[dict]  # new tasks / blocks discovered
     memory_updates: dict  # collected for sequential application
+    commit_sha: str  # empty string if no commit was made
 
 
 class WorkerOutput(TypedDict):
