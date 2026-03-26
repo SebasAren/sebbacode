@@ -75,6 +75,12 @@ The following plan was rejected by the user. Address their feedback.
 
 ---
 
+# Explore Before Planning
+
+**IMPORTANT**: Before creating any subagent tasks, you MUST first run the `explore_codebase` tool to understand the codebase structure, existing patterns, and relevant file locations. Use a focused question like "Where is similar functionality implemented?" or "What patterns exist for [task type]?" — do NOT do a general exploration. Return from the explore tool before proceeding.
+
+---
+
 # Output Format
 
 Generate a JSON object with a "tasks" array. Each task has:
