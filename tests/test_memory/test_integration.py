@@ -231,7 +231,7 @@ class TestErrorRecoveryFlow(TestCase):
         cfg = MemoryLayerConfig(max_summarization_retries=1)
         layer = MemoryLayer(memory_root=self.tmp, config=cfg)
         
-        content = "X" * 300  # Long enough to trigger LLM
+        content = "X" * 500  # Long enough to trigger LLM
         entry = L2Entry(
             key=content_hash(content),
             topic="failure",
@@ -263,8 +263,8 @@ class TestErrorRecoveryFlow(TestCase):
 
         # Two entries that both need LLM
         entries = [
-            L2Entry(key="a", topic="batch", content="A" * 300, file="batch/a.md", created_at=_now()),
-            L2Entry(key="b", topic="batch", content="B" * 300, file="batch/b.md", created_at=_now()),
+            L2Entry(key="a", topic="batch", content="A" * 500, file="batch/a.md", created_at=_now()),
+            L2Entry(key="b", topic="batch", content="B" * 500, file="batch/b.md", created_at=_now()),
         ]
         
         results = []

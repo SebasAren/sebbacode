@@ -508,6 +508,9 @@ Rules:
 - Only extract genuinely NEW knowledge not already in memory
 - Empty lists if nothing new was learned
 - Keep index lines under 100 characters
+- The "content" field must be DETAILED and COMPREHENSIVE — include full context,
+  reasoning, specific examples, code snippets, and decision rationale.
+  This is the detailed reference layer. Do NOT summarize or condense.
 """
 
     try:

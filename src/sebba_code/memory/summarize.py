@@ -49,8 +49,9 @@ Rules:
 - Preserve specific filenames, function names, and code patterns verbatim.
 - Omit conversational filler, repetition, and obvious context.
 - Output ONLY the summary text — no preamble, no closing remarks.
-- Keep the summary between 150 and 600 words unless the source material is
-  trivial (in which case a single sentence is acceptable).
+- Your summary MUST be SHORTER than the source material. Never expand or elaborate.
+- Target roughly 30-50% of the original length.
+- If the source is already under 100 words, produce a single concise sentence.
 """.strip()
 
 _SUMMARISE_USER_PROMPT = """## Memory Entry to Summarise
@@ -73,7 +74,7 @@ def summarise_l2_to_l1(
     l2_entry: L2Entry,
     layer: Optional[MemoryLayer] = None,
     config: Optional[MemoryLayerConfig] = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: int = 60,
 ) -> Optional[L1Summary]:
     """Summarise a single L2 entry and write the resulting L1 file.
 
@@ -225,6 +226,13 @@ def _call_summarise_with_retry(
                 timeout_seconds=timeout_seconds,
             )
             text = _strip_markdown_code_fences(response.content)
+            if len(text) > len(content):
+                logger.warning(
+                    "Summarisation for topic=%s expanded content (%d > %d chars); "
+                    "using original content as L1 summary.",
+                    topic, len(text), len(content),
+                )
+                return content.strip()
             if _is_valid_summary(text, min_words=10):
                 return text
             logger.warning(

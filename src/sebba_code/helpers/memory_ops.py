@@ -73,8 +73,14 @@ def apply_index_updates(updates: list[dict]) -> None:
 
     content = index_path.read_text()
     for update in updates:
+        if isinstance(update, str):
+            # LLM sometimes returns plain strings — treat as new_line append
+            content = content.rstrip() + "\n" + update + "\n"
+            continue
         old_line = update.get("old_line")
-        new_line = update["new_line"]
+        new_line = update.get("new_line", "")
+        if not new_line:
+            continue
         if old_line and old_line in content:
             content = content.replace(old_line, new_line, 1)
         else:

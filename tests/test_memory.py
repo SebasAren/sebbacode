@@ -61,7 +61,7 @@ class TestMemoryLayerConfig(TestCase):
     def test_defaults(self):
         cfg = MemoryLayerConfig()
         self.assertEqual(cfg.min_l2_length_to_write, 50)
-        self.assertEqual(cfg.min_l2_length_for_summary, 200)
+        self.assertEqual(cfg.min_l2_length_for_summary, 400)
         self.assertEqual(cfg.max_summarization_retries, 2)
 
 

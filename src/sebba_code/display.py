@@ -1,11 +1,14 @@
 """Rich live display for agent execution progress."""
 
+import logging
+import re
 import time
 from collections import deque
 
 from langchain_core.messages import AIMessage, ToolMessage
 from rich.console import Console, Group
 from rich.live import Live
+from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -103,6 +106,8 @@ class RichDisplay:
         self.console = Console()
         self.live: Live | None = None
         self._is_terminal = self.console.is_terminal
+        self._last_update = 0.0
+        self._saved_handlers: list = []
 
     def __enter__(self):
         if self._is_terminal:
@@ -113,12 +118,22 @@ class RichDisplay:
                 transient=True,
             )
             self.live.__enter__()
+            # Redirect logging through Rich so it doesn't clobber the Live display
+            root = logging.getLogger()
+            self._saved_handlers = root.handlers[:]
+            root.handlers.clear()
+            root.addHandler(RichHandler(console=self.console, show_path=False))
         return self
 
     def __exit__(self, *args):
         if self.live:
             self.live.__exit__(*args)
             self.live = None
+            # Restore original logging handlers
+            root = logging.getLogger()
+            root.handlers.clear()
+            root.handlers.extend(self._saved_handlers)
+            self._saved_handlers.clear()
         # Print final state so it persists in terminal
         if self._is_terminal:
             self.console.print(self._render())
@@ -140,7 +155,7 @@ class RichDisplay:
             self.console.print(f"[{elapsed:.1f}s] {phase}")
 
     def log_activity(self, task_id: str | None, message: str):
-        prefix = f"[{task_id}] " if task_id else ""
+        prefix = f"[{task_id[:8]}] " if task_id else ""
         self.activity.append(f"{prefix}{message}")
         if not self._is_terminal and self.verbose:
             self.console.print(f"  {prefix}{message}")
@@ -157,8 +172,12 @@ class RichDisplay:
         elif mode == "messages":
             self._handle_message(ns, payload)
 
+        # Throttle live.update() to avoid flickering from per-token updates
         if self.live:
-            self.live.update(self._render())
+            now = time.monotonic()
+            if now - self._last_update >= 0.25:
+                self.live.update(self._render())
+                self._last_update = now
 
     def _handle_update(self, ns: tuple, data: dict):
         """Handle a node update event."""
@@ -166,7 +185,7 @@ class RichDisplay:
             # Parent graph node
             for node_name, output in data.items():
                 phase = PHASE_MAP.get(node_name)
-                if phase:
+                if phase and phase != self.phase:
                     self.set_phase(phase)
                 if node_name in ("build_dag", "dispatch_tasks", "collect_results"):
                     tasks = output.get("tasks")
@@ -196,11 +215,18 @@ class RichDisplay:
                         line = _format_tool_call_concise(name, args)
                     self.log_activity(task_id, line)
             elif self.verbose and message.content:
-                text = str(message.content)[:100].replace("\n", " ")
-                self.log_activity(task_id, f"LLM: {text}")
+                text = str(message.content).strip()
+                # Skip structured output (JSON, markdown tables)
+                if text.startswith(("```", "{", "[")):
+                    pass
+                else:
+                    text = re.sub(r"[*`#|]", "", text)
+                    text = text.replace("\n", " ")[:80].strip()
+                    if text:
+                        self.log_activity(task_id, f"LLM: {text}")
 
         elif isinstance(message, ToolMessage) and self.verbose:
-            result = str(message.content)[:150].replace("\n", " ")
+            result = str(message.content).strip().replace("\n", " ")[:80]
             self.log_activity(task_id, f"  \u2192 {message.name}: {result}")
 
     def _resolve_task_id(self, ns: tuple, data: dict | None = None) -> str | None:

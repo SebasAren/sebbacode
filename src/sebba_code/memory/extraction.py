@@ -109,16 +109,20 @@ def run_extraction(
 def _topic_from_file(file_key: str) -> str:
     """Derive a short topic string from a memory file key.
 
-    memory/architecture.md   → "architecture"
-    memory/decisions/adr.md  → "decisions"
+    memory/architecture.md        → "architecture"
+    memory/decisions/adr.md       → "decisions"
+    architecture/graph-nodes.md   → "architecture"
+    graph-nodes.md                → "graph-nodes"
     """
     from pathlib import Path
 
-    stem = Path(file_key).stem
-    # If the key has multiple path components, use the parent dir as topic
     parts = Path(file_key).parts
-    if len(parts) > 2:          # memory/decisions/2026-03-25.md → decisions
-        topic = parts[1]
+    # Strip leading "memory" prefix if present
+    if parts and parts[0] == "memory":
+        parts = parts[1:]
+    if len(parts) > 1:
+        # Use the top-level directory as the topic
+        topic = parts[0]
     else:
-        topic = stem
+        topic = Path(file_key).stem
     return topic or "session"

@@ -6,6 +6,7 @@ from sebba_code.tools.exploration import (
     explore,
     try_approach,
 )
+from sebba_code.tools.git_commit import git_commit
 from sebba_code.tools.memory import memory_query
 from sebba_code.tools.progress import (
     add_subtask,
@@ -32,6 +33,7 @@ def get_all_tools() -> list:
         evaluate,
         adopt,
         memory_query,
+        git_commit,
     ]
 
 
@@ -48,4 +50,5 @@ def get_worker_tools() -> list:
         signal_blocked,
         add_subtask,
         memory_query,
+        git_commit,
     ]

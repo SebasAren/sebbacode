@@ -25,7 +25,7 @@ class MemoryLayerConfig:
 
     # Minimum L2 content length (chars) before L1 summarisation is triggered.
     # Content shorter than this is copied verbatim to L1.
-    min_l2_length_for_summary: int = 200
+    min_l2_length_for_summary: int = 400
 
     # Minimum L2 content length (chars) before L2 is even written.
     # Content shorter than this is skipped entirely.
