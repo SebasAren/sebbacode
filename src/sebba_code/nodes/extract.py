@@ -1,9 +1,10 @@
-"""Session-level extraction — writes session summary and applies collected memory updates."""
+"""Session-level extraction — writes session summary and emits L2 entries to state."""
 
 import logging
+import os
 from datetime import date
 
-from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
+from sebba_code.constants import get_agent_dir
 from sebba_code.helpers.memory_ops import (
     append_or_create,
     apply_index_updates,
@@ -16,7 +17,12 @@ logger = logging.getLogger("sebba_code")
 
 
 def extract_session(state: AgentState) -> dict:
-    """Apply collected memory updates and write session summary."""
+    """Apply collected memory updates and write session summary.
+
+    L2 entries are stashed in state for the downstream ``summarize_to_l1``
+    node to condense into L1.  The post-extraction hook is no longer used
+    here — the synchronous summarisation step now lives in the graph.
+    """
     logger.info("Extracting session into lasting memory")
     agent_dir = get_agent_dir()
     results = state.get("task_results", [])
@@ -24,6 +30,9 @@ def extract_session(state: AgentState) -> dict:
 
     if not results and not completed:
         return {}
+
+    # Collect L2 entries so the downstream node can summarise them
+    l2_entries: list[dict] = []
 
     # Apply memory updates collected from each worker
     for result in results:
@@ -33,11 +42,27 @@ def extract_session(state: AgentState) -> dict:
                 apply_memory_updates(updates.get("memory_updates", []))
                 apply_index_updates(updates.get("index_updates", []))
                 apply_new_rules(updates.get("new_rules", []))
-            except Exception:
-                logger.warning("Failed to apply memory updates from task %s",
-                               result.get("task_id"), exc_info=True)
 
-    # Write session summary
+                # Pull L2 content out of the memory_updates.  We look for
+                # any entry that carries "content" — those are the detailed
+                # L2 writes.
+                for mu in updates.get("memory_updates", []):
+                    if mu.get("content") and mu.get("action") in (
+                        "create",
+                        "append",
+                    ):
+                        l2_entries.append({
+                            "content": mu["content"],
+                            "file": mu.get("file", ""),
+                            "topic": _topic_from_file(mu.get("file", "")),
+                        })
+            except Exception:
+                logger.warning(
+                    "Failed to apply memory updates from task %s",
+                    result.get("task_id"), exc_info=True,
+                )
+
+    # Write session summary to .agent/sessions/
     parts = []
     for result in results:
         part = f"## Task: {result.get('task_id', 'unknown')}\n"
@@ -57,4 +82,13 @@ def extract_session(state: AgentState) -> dict:
         session_file = agent_dir / "sessions" / f"{date.today().isoformat()}.md"
         append_or_create(session_file, session_content)
 
-    return {}
+    # Pass L2 entries to the downstream summarisation node
+    return {"l2_entries": l2_entries}
+
+
+def _topic_from_file(file: str) -> str:
+    """Derive a topic label from a memory file path."""
+    if not file:
+        return "session"
+    stem = os.path.splitext(os.path.basename(file))[0]
+    return stem.replace("_", " ").replace("-", " ").title() or "session"

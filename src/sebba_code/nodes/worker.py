@@ -39,6 +39,13 @@ def _tools_condition_with_limit(state: WorkerState) -> str:
     if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
         return "__end__"
 
+    # Terminate immediately when the worker signals it's blocked — the tool
+    # doesn't need to execute since worker_summarize reads from AIMessage.tool_calls.
+    for tc in last_message.tool_calls:
+        if tc["name"] == "signal_blocked":
+            logger.info("worker: signal_blocked called, terminating loop")
+            return "__end__"
+
     tool_call_count = sum(
         1 for m in messages
         if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)
@@ -50,6 +57,26 @@ def _tools_condition_with_limit(state: WorkerState) -> str:
             tool_call_count, max_calls,
         )
         return "__end__"
+
+    # Detect repeated identical tool calls (stuck in a loop)
+    from collections import Counter
+    recent_calls = []
+    for m in reversed(messages):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            for tc in m.tool_calls:
+                recent_calls.append((tc["name"], str(sorted(tc.get("args", {}).items()))))
+            if len(recent_calls) >= 8:
+                break
+    if recent_calls:
+        counts = Counter(recent_calls)
+        top_call, top_count = counts.most_common(1)[0]
+        if top_count >= 3:
+            logger.warning(
+                "worker: detected repeated tool call %s (%d times in last %d), forcing completion",
+                top_call[0], top_count, len(recent_calls),
+            )
+            return "__end__"
+
     return "tools"
 
 
@@ -246,6 +273,20 @@ def _build_worker_system_prompt(state: WorkerState) -> str:
         "- If a task asks you to 'document', 'audit', or 'report', produce your analysis as "
         "a message, not a file."
     )
+
+    sections.append(
+        "# Progress Tools\n"
+        "- If your task requires prerequisite work that isn't done (missing function, missing "
+        "module, missing config), call `signal_blocked` with a description of the prerequisite. "
+        "Do NOT attempt to create the prerequisite yourself — that's a different task.\n"
+        "- If you discover out-of-scope work that needs doing, call `add_subtask` to create a "
+        "new task for it. Stay focused on YOUR task.\n"
+        "- When you've completed your task, call `mark_task_done` with a summary, then stop "
+        "making tool calls."
+    )
+
+    if state.get("predecessor_context"):
+        sections.append(state["predecessor_context"])
 
     if state.get("worker_briefing"):
         sections.append(f"# Codebase Briefing\n{state['worker_briefing']}")

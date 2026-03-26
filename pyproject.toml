@@ -23,6 +23,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/sebba_code"]
 
+[tool.pytest.ini_options]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: tests that hit a real LLM (run with: pytest -m integration)",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

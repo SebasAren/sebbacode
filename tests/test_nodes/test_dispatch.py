@@ -20,6 +20,7 @@ def _task(id: str, status: str = "pending", depends_on: list[str] | None = None)
         result_summary="",
         files_touched=[],
         target_files=[],
+        progress_summary="",
     )
 
 

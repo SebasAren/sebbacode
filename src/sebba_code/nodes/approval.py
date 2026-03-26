@@ -33,6 +33,7 @@ def build_dag(state: AgentState) -> dict:
             result_summary="",
             files_touched=[],
             target_files=t.get("target_files", []),
+            progress_summary="",
         )
 
     logger.info("Built DAG with %d tasks", len(tasks))

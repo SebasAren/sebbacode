@@ -35,6 +35,36 @@ def is_dag_deadlocked(tasks: dict[str, Task]) -> bool:
     return len(ready) == 0 and len(running) == 0
 
 
+def _build_predecessor_context(task: Task, tasks: dict[str, Task]) -> str:
+    """Build context string from predecessor results and own prior progress."""
+    parts = []
+
+    # Own prior progress (resuming after block)
+    if task.get("progress_summary"):
+        parts.append(
+            "# Prior Progress (this task was previously blocked)\n"
+            f"Blocked because: {task.get('blocked_reason', 'unknown')}\n"
+            f"What was done before blocking:\n{task['progress_summary']}"
+        )
+
+    # Predecessor task results
+    dep_parts = []
+    for dep_id in task.get("depends_on", []):
+        dep = tasks.get(dep_id)
+        if not dep or not dep.get("result_summary"):
+            continue
+        dep_parts.append(
+            f"## {dep_id}: {dep['description']}\n"
+            f"Summary: {dep['result_summary']}\n"
+            f"Files touched: {', '.join(dep.get('files_touched', [])) or 'none'}"
+        )
+
+    if dep_parts:
+        parts.append("# Completed Prerequisites\n" + "\n\n".join(dep_parts))
+
+    return "\n\n".join(parts)
+
+
 def dispatch_tasks(state: AgentState) -> Command[Literal["task_worker", "extract_session"]]:
     """Fan out ready tasks to parallel workers via Send()."""
     tasks = dict(state["tasks"])  # copy for mutation
@@ -67,6 +97,7 @@ def dispatch_tasks(state: AgentState) -> Command[Literal["task_worker", "extract
             "task": task,
             "messages": [],
             "worker_briefing": "",
+            "predecessor_context": _build_predecessor_context(task, tasks),
             "memory": state["memory"],
             "target_files": task["target_files"],
             "working_branch": state.get("working_branch"),
@@ -81,6 +112,11 @@ def collect_results(state: AgentState) -> Command[Literal["dispatch_tasks", "ext
     tasks = dict(state["tasks"])  # copy for mutation
     results = state.get("task_results", [])
     completed_ids = []
+
+    # Build a lookup so we can access full results when processing mutations
+    results_by_tid = {}
+    for result in results:
+        results_by_tid[result["task_id"]] = result
 
     for result in results:
         tid = result["task_id"]
@@ -108,10 +144,18 @@ def collect_results(state: AgentState) -> Command[Literal["dispatch_tasks", "ext
                     result_summary="",
                     files_touched=[],
                     target_files=mutation.get("target_files", []),
+                    progress_summary="",
                 )
                 # The task that discovered this is blocked by the new task
                 blocked_id = mutation.get("blocked_task_id")
                 if blocked_id and blocked_id in tasks:
+                    # Save the blocked task's progress before resetting
+                    blocked_result = results_by_tid.get(blocked_id)
+                    if blocked_result:
+                        tasks[blocked_id]["progress_summary"] = (
+                            blocked_result.get("what_i_did")
+                            or blocked_result.get("summary", "")
+                        )
                     tasks[blocked_id]["depends_on"].append(new_id)
                     tasks[blocked_id]["status"] = "pending"
                     tasks[blocked_id]["blocked_reason"] = mutation.get("reason", "")
@@ -128,6 +172,7 @@ def collect_results(state: AgentState) -> Command[Literal["dispatch_tasks", "ext
                     result_summary="",
                     files_touched=[],
                     target_files=mutation.get("target_files", []),
+                    progress_summary="",
                 )
                 logger.info("Added subtask %s", new_id)
 

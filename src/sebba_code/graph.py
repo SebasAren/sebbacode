@@ -14,6 +14,7 @@ from sebba_code.nodes.planning import (
     plan_draft,
     plan_refine,
 )
+from sebba_code.nodes.summarize import summarize_to_l1
 from sebba_code.nodes.worker import build_task_worker
 from sebba_code.state import AgentState
 
@@ -25,7 +26,7 @@ def build_agent_graph(checkpointer=None):
         START → load_context → [bootstrap?] → plan_draft → plan_critique
         → [complete?] → build_dag → human_approval → [approve?]
         → dispatch_tasks → task_worker(s) → collect_results → [more?]
-        → extract_session → END
+        → extract_session → summarize_to_l1 → END
     """
     graph = StateGraph(AgentState)
 
@@ -42,6 +43,7 @@ def build_agent_graph(checkpointer=None):
     graph.add_node("task_worker", build_task_worker())
     graph.add_node("collect_results", collect_results)
     graph.add_node("extract_session", extract_session)
+    graph.add_node("summarize_to_l1", summarize_to_l1)
 
     # --- Edges ---
 
@@ -76,7 +78,8 @@ def build_agent_graph(checkpointer=None):
     graph.add_edge("task_worker", "collect_results")
     # collect_results returns Command routing to dispatch_tasks or extract_session
 
-    # Terminal
-    graph.add_edge("extract_session", END)
+    # Terminal pipeline: extract → summarise → END
+    graph.add_edge("extract_session", "summarize_to_l1")
+    graph.add_edge("summarize_to_l1", END)
 
     return graph.compile(checkpointer=checkpointer)

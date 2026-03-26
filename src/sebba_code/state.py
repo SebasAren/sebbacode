@@ -7,6 +7,27 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
+class L2EntryDict(TypedDict):
+    """A serialisable L2 entry stored in graph state (passed to summariser)."""
+
+    content: str
+    file: str
+    topic: str
+
+
+class L1SummaryDict(TypedDict):
+    """A serialised L1 summary produced by the summariser."""
+
+    file: str
+    topic: str
+    summary: str
+    source_l2_key: str
+    l2_preview: str
+    created_at: str
+    version: int
+    summary_model: str
+
+
 class AgentMemoryContext(TypedDict):
     """Assembled memory for this invocation."""
 
@@ -28,6 +49,7 @@ class Task(TypedDict):
     result_summary: str
     files_touched: list[str]
     target_files: list[str]
+    progress_summary: str  # what was done before blocking (for resume)
 
 
 class TaskResult(TypedDict):
@@ -54,6 +76,7 @@ class WorkerState(TypedDict):
     task: Task
     messages: Annotated[list[BaseMessage], add_messages]
     worker_briefing: str
+    predecessor_context: str  # summaries from dependency tasks + own prior progress
     memory: AgentMemoryContext
     target_files: list[str]
     working_branch: Optional[str]
@@ -85,6 +108,12 @@ class AgentState(TypedDict):
 
     # Session tracking
     tasks_completed_this_session: Annotated[list[str], operator.add]
+
+    # L2 extraction output — consumed by summarize_to_l1
+    l2_entries: list[L2EntryDict]
+
+    # L1 summarisation output — written by summarize_to_l1
+    l1_summaries: list[L1SummaryDict]
 
     # Human-in-the-loop
     plan_approved: Optional[bool]

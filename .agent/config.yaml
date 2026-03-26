@@ -17,9 +17,6 @@ loading:
 
 explorer:
   bootstrap_on_empty: true
-  validate_new_roadmaps: true
-  recon_before_todo: true
 
 execution:
-  max_todos_per_session: 5
-  max_tool_calls_per_todo: 50
+  max_tool_calls_per_task: 50

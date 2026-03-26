@@ -98,10 +98,20 @@ class TestPlanCritique:
     def test_detects_missing_tasks(self):
         state = _make_state(draft_plan="No tasks here")
         result = plan_critique(state)
-        assert result.get("planning_complete") is True
+        # Issues found on iteration 0 triggers a refine cycle
+        assert result.get("planning_complete") is False
+        assert "rejection_reason" in result
 
     def test_detects_short_content(self):
         state = _make_state(draft_plan="short")
+        result = plan_critique(state)
+        # Issues found on iteration 0 triggers a refine cycle
+        assert result.get("planning_complete") is False
+        assert "rejection_reason" in result
+
+    def test_issues_at_max_iterations_accepts(self):
+        """When issues are found but max iterations reached, accept anyway."""
+        state = _make_state(draft_plan="short", planning_iteration=2)
         result = plan_critique(state)
         assert result.get("planning_complete") is True
 

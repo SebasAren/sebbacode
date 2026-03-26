@@ -4,6 +4,7 @@ import logging
 from typing import Literal
 
 from sebba_code.constants import get_agent_dir
+from sebba_code.helpers.parsing import parse_json
 from sebba_code.llm import get_llm
 from sebba_code.planning_prompts import draft_plan_prompt
 from sebba_code.state import AgentState
@@ -78,8 +79,48 @@ def plan_draft(state: AgentState, configurable: dict | None = None) -> dict:
     }
 
 
+def _get_ancestors(task_id: str, tasks: list[dict]) -> set[str]:
+    """Return the transitive set of ancestor task IDs (all dependencies, recursively)."""
+    by_id = {t["id"]: t for t in tasks}
+    ancestors: set[str] = set()
+    stack = list(by_id.get(task_id, {}).get("depends_on", []))
+    while stack:
+        dep = stack.pop()
+        if dep not in ancestors:
+            ancestors.add(dep)
+            stack.extend(by_id.get(dep, {}).get("depends_on", []))
+    return ancestors
+
+
+def _check_file_overlap(tasks: list[dict]) -> list[str]:
+    """Check for target_files overlap between tasks that can run in parallel."""
+    issues = []
+    n = len(tasks)
+    # Precompute ancestors for each task
+    ancestor_map = {t["id"]: _get_ancestors(t["id"], tasks) for t in tasks}
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            t1, t2 = tasks[i], tasks[j]
+            # Skip if one depends on the other (directly or transitively)
+            if t1["id"] in ancestor_map.get(t2["id"], set()):
+                continue
+            if t2["id"] in ancestor_map.get(t1["id"], set()):
+                continue
+            # Check file overlap
+            files1 = set(t1.get("target_files", []))
+            files2 = set(t2.get("target_files", []))
+            overlap = files1 & files2
+            if overlap:
+                issues.append(
+                    f"Parallel tasks {t1['id']} and {t2['id']} both target "
+                    f"{', '.join(sorted(overlap))} — add a dependency edge or split files"
+                )
+    return issues
+
+
 def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
-    """Validate the draft plan structure and quality."""
+    """Validate the draft plan structure, quality, and parallel-safety."""
     draft = state.get("draft_plan", "")
     planning_iteration = state.get("planning_iteration", 0)
     max_iterations = _get_max_iterations(configurable)
@@ -88,7 +129,7 @@ def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
         logger.info("Max iterations (%d) reached, marking complete", max_iterations)
         return {"planning_complete": True}
 
-    # Basic validation
+    # Basic structure validation
     issues = []
     if '"tasks"' not in draft and "'tasks'" not in draft:
         issues.append("Plan must contain a tasks array")
@@ -97,8 +138,24 @@ def plan_critique(state: AgentState, configurable: dict | None = None) -> dict:
     if len(draft) < 50:
         issues.append("Plan content seems too short")
 
+    # File overlap check for parallel tasks
+    if not issues:
+        parsed = parse_json(draft)
+        if parsed and "tasks" in parsed:
+            overlap_issues = _check_file_overlap(parsed["tasks"])
+            issues.extend(overlap_issues)
+
     if issues:
         logger.debug("Critique found issues: %s", issues)
+        # If we still have iterations left, reject so plan_refine can fix it
+        if planning_iteration < max_iterations - 1:
+            return {
+                "planning_complete": False,
+                "rejection_reason": "; ".join(issues),
+                "planning_iteration": planning_iteration + 1,
+            }
+        # Out of iterations — accept with warning
+        logger.warning("Critique issues remain but max iterations reached: %s", issues)
         return {"planning_complete": True}
 
     logger.info("Critique passed, planning complete")

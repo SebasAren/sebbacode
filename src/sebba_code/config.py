@@ -1,9 +1,12 @@
 """Configuration dataclasses and YAML loading for the agent."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger("sebba_code")
 
 
 @dataclass
@@ -118,10 +121,17 @@ def load_config(agent_dir: Path) -> AgentConfig:
         ("llm", LLMConfig),
     ]:
         if section_name in raw and isinstance(raw[section_name], dict):
+            known = set(section_cls.__dataclass_fields__)
+            unknown = set(raw[section_name]) - known
+            if unknown:
+                logger.warning(
+                    "config.yaml [%s]: unknown keys ignored: %s",
+                    section_name, unknown,
+                )
             section = section_cls(**{
                 k: v
                 for k, v in raw[section_name].items()
-                if k in section_cls.__dataclass_fields__
+                if k in known
             })
             setattr(config, section_name, section)
 
