@@ -5,11 +5,11 @@ uv = "latest"
 SEBBA_MODEL = "minimax-m27"
 SEBBA_MODEL_PROVIDER = "openai"
 SEBBA_BASE_URL = "{{env.VENICE_API_URL}}"
-SEBBA_CHEAP_MODEL = "qwen3-5-9b"
+SEBBA_CHEAP_MODEL = "mistral-small-latest"
 SEBBA_CHEAP_MODEL_PROVIDER = "openai"
-SEBBA_CHEAP_BASE_URL = "{{env.VENICE_API_URL}}"
+SEBBA_CHEAP_BASE_URL = "https://api.mistral.ai/v1"
 SEBBA_API_KEY = "{{env.VENICE_API_KEY}}"
-SEBBA_CHEAP_API_KEY = "{{env.VENICE_API_KEY}}"
+SEBBA_CHEAP_API_KEY = "{{env.MISTRAL_API_KEY}}"
 
 [tasks.run]
 run = "uv run sebba-code run -v \"$@\""
@@ -34,3 +34,7 @@ description = "Preview task DAG without executing"
 [tasks.test]
 run = "uv run pytest tests/ -v"
 description = "Run all tests"
+
+[tasks.test-integration]
+run = "uv run pytest -m integration -v"
+description = "Run integration tests (requires real LLM endpoint)"
