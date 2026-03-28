@@ -20,6 +20,7 @@ logger = logging.getLogger("sebba_code")
 # Config
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class MemoryLayerConfig:
     """Configuration for L1/L2 memory layers."""
@@ -32,9 +33,17 @@ class MemoryLayerConfig:
     # Content shorter than this is skipped entirely.
     min_l2_length_to_write: int = 50
 
+    # Max L2 content length (chars) before writing to disk.
+    # Content exceeding this is truncated with a note appended.
+    max_l2_length_to_write: int = 6000
+
     # Max L2 content length (chars). Content longer than this is truncated
     # before summarisation to avoid excessive token usage on cheap LLM.
     max_l2_length_for_summary: int = 8000
+
+    # Maximum number of L2 entries per topic directory. When exceeded,
+    # the oldest entries (by mtime) are evicted to make room.
+    max_l2_entries_per_topic: int = 20
 
     # Maximum number of retry attempts when L1 summarisation fails.
     max_summarization_retries: int = 1
@@ -47,17 +56,18 @@ class MemoryLayerConfig:
 # L1 / L2 record containers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class L1Summary:
     """A condensed summary stored at L1 (one per L2 group)."""
 
-    file: str           # relative path within memory/  e.g. "concepts/caching.md"
-    topic: str          # short human-readable topic derived from the path
-    summary: str        # the LLM-generated summary text
+    file: str  # relative path within memory/  e.g. "concepts/caching.md"
+    topic: str  # short human-readable topic derived from the path
+    summary: str  # the LLM-generated summary text
     source_l2_key: str  # which L2 entry this summarises
-    l2_preview: str     # first ~200 chars of the original L2 content
-    created_at: str     # ISO-8601 timestamp
-    version: int = 1    # monotonically increasing on re-summarisation
+    l2_preview: str  # first ~200 chars of the original L2 content
+    created_at: str  # ISO-8601 timestamp
+    version: int = 1  # monotonically increasing on re-summarisation
     summary_model: str = ""  # model used for summarisation (for audit)
 
     def to_dict(self) -> dict:
@@ -77,11 +87,11 @@ class L1Summary:
 class L2Entry:
     """A detailed memory entry stored at L2 (raw extraction output)."""
 
-    key: str          # deterministic key derived from content (prevents duplicates)
-    topic: str         # short topic, usually derived from the containing directory
-    content: str       # full detailed content
-    file: str          # relative path where this entry lives on disk
-    created_at: str   # ISO-8601 timestamp
+    key: str  # deterministic key derived from content (prevents duplicates)
+    topic: str  # short topic, usually derived from the containing directory
+    content: str  # full detailed content
+    file: str  # relative path where this entry lives on disk
+    created_at: str  # ISO-8601 timestamp
     version: int = 1  # incremented on each update to the same key
 
     def to_dict(self) -> dict:
@@ -99,6 +109,7 @@ class L2Entry:
 # Content hashing utilities
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def content_hash(content: str) -> str:
     """Return a short hex digest of the content (used as a stable L2 key)."""
     return hashlib.sha256(content.encode()).hexdigest()[:16]
@@ -112,9 +123,9 @@ def _sanitize_stem(name: str) -> Optional[str]:
     # Strip directory components and extension
     stem = Path(name).stem
     # Replace unsafe characters with hyphens
-    stem = re.sub(r'[^\w\-]', '-', stem)
+    stem = re.sub(r"[^\w\-]", "-", stem)
     # Collapse multiple hyphens
-    stem = re.sub(r'-+', '-', stem).strip('-')
+    stem = re.sub(r"-+", "-", stem).strip("-")
     return stem.lower() if stem else None
 
 
@@ -128,6 +139,7 @@ def topic_from_path(relative_path: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # Core storage class
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class MemoryLayer:
     """Dual-tier memory: L2 stores detailed extractions, L1 stores summaries.
@@ -178,37 +190,50 @@ class MemoryLayer:
         if skip_if_short and len(content) < self.config.min_l2_length_to_write:
             logger.debug(
                 "L2 write skipped: content too short (%d < %d chars)",
-                len(content), self.config.min_l2_length_to_write,
+                len(content),
+                self.config.min_l2_length_to_write,
             )
             return None
+
+        if len(content) > self.config.max_l2_length_to_write:
+            original_len = len(content)
+            content = content[: self.config.max_l2_length_to_write]
+            content += f"\n\n<!-- truncated: {original_len} → {self.config.max_l2_length_to_write} chars -->"
+            logger.info(
+                "L2 content truncated: %d → %d chars for topic=%s",
+                original_len,
+                self.config.max_l2_length_to_write,
+                topic,
+            )
 
         key = content_hash(content)
         l2_dir = self.memory_root / topic
         l2_dir.mkdir(parents=True, exist_ok=True)
 
-        # Idempotency: check if exact content already exists anywhere in the topic dir
         for existing_file in l2_dir.glob("*.md"):
             try:
                 if existing_file.read_text().strip() == content.strip():
-                    logger.debug("L2 entry already exists at %s, skipping", existing_file)
+                    logger.debug(
+                        "L2 entry already exists at %s, skipping", existing_file
+                    )
                     return None
             except Exception:
                 continue
 
-        # Determine filename: prefer suggested_name, fall back to hash
         stem = _sanitize_stem(suggested_name) if suggested_name else None
         if not stem:
             stem = key
 
         candidate_file = l2_dir / f"{stem}.md"
 
-        # Handle name collisions: append short hash suffix if file exists with different content
         if candidate_file.exists():
             stem = f"{stem}-{key[:6]}"
             candidate_file = l2_dir / f"{stem}.md"
 
         file_path = candidate_file
         file_path.write_text(content)
+
+        self._evict_l2_if_needed(topic, l2_dir)
 
         entry = L2Entry(
             key=key,
@@ -301,7 +326,9 @@ class MemoryLayer:
                         meta[k.strip()] = v.strip()
                 # content after <!-- l2_preview -->
                 if "<!-- l2_preview -->" in body:
-                    summary_text, _, preview_part = body.partition("<!-- l2_preview -->")
+                    summary_text, _, preview_part = body.partition(
+                        "<!-- l2_preview -->"
+                    )
                     preview = preview_part.strip()
                 else:
                     summary_text = body.strip()
@@ -347,3 +374,24 @@ class MemoryLayer:
         shutil.rmtree(l2_dir)
         logger.info("Purged %d L2 entries for topic=%s", count, topic)
         return count
+
+    def _evict_l2_if_needed(self, topic: str, l2_dir: Path) -> None:
+        """Evict oldest L2 entries when a topic exceeds max_l2_entries_per_topic."""
+        max_entries = self.config.max_l2_entries_per_topic
+        if max_entries <= 0:
+            return
+        existing = sorted(l2_dir.glob("*.md"), key=lambda f: f.stat().st_mtime)
+        if len(existing) <= max_entries:
+            return
+        to_remove = existing[: len(existing) - max_entries]
+        for f in to_remove:
+            try:
+                f.unlink()
+                logger.info(
+                    "Evicted L2 entry %s (topic=%s, over limit of %d)",
+                    f.name,
+                    topic,
+                    max_entries,
+                )
+            except OSError:
+                pass
