@@ -41,17 +41,17 @@ logger = logging.getLogger("sebba_code")
 # ──────────────────────────────────────────────────────────────────────────────
 
 _SUMMARISE_SYSTEM_PROMPT = """You are a technical knowledge condensation engine.
-Your task is to produce a concise, accurate, and self-contained summary of the
-provided memory entry.
+Produce a concise, accurate, and self-contained summary of the provided memory entry.
 
 Rules:
-- Include all critical facts, decisions, and conclusions.
-- Preserve specific filenames, function names, and code patterns verbatim.
-- Omit conversational filler, repetition, and obvious context.
+- Preserve ALL specific identifiers: filenames, function names, class names, module paths, and variable names verbatim.
+- Preserve ALL architectural decisions and the reasoning behind them.
+- Preserve ALL error conditions, edge cases, and gotchas discovered.
+- Remove conversational filler, repetition, and boilerplate context.
 - Output ONLY the summary text — no preamble, no closing remarks.
-- Your summary MUST be SHORTER than the source material. Never expand or elaborate.
-- Target roughly 30-50% of the original length.
+- Target roughly 40-60% of the original length. Prefer losing minor details over losing identifiers.
 - If the source is already under 100 words, produce a single concise sentence.
+- Structure with bullet points when multiple distinct facts are present.
 """.strip()
 
 _SUMMARISE_USER_PROMPT = """## Memory Entry to Summarise
@@ -69,6 +69,7 @@ Write a concise summary following the rules above."""
 # ──────────────────────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def summarise_l2_to_l1(
     l2_entry: L2Entry,
@@ -106,7 +107,9 @@ def summarise_l2_to_l1(
     if len(content) < cfg.min_l2_length_for_summary:
         logger.debug(
             "Skipping summarisation for key=%s: only %d chars (< %d minimum)",
-            l2_entry.key, len(content), cfg.min_l2_length_for_summary,
+            l2_entry.key,
+            len(content),
+            cfg.min_l2_length_for_summary,
         )
         # Still write a verbatim L1 for short content — no LLM needed.
         summary_text = content.strip()
@@ -115,7 +118,9 @@ def summarise_l2_to_l1(
         if len(content) > cfg.max_l2_length_for_summary:
             logger.warning(
                 "L2 content for key=%s is %d chars (limit %d); truncating for summarisation.",
-                l2_entry.key, len(content), cfg.max_l2_length_for_summary,
+                l2_entry.key,
+                len(content),
+                cfg.max_l2_length_for_summary,
             )
             content = content[: cfg.max_l2_length_for_summary]
 
@@ -130,7 +135,8 @@ def summarise_l2_to_l1(
         if summary_text is None:
             logger.error(
                 "Summarisation failed permanently for key=%s after %d retries",
-                l2_entry.key, cfg.max_summarization_retries,
+                l2_entry.key,
+                cfg.max_summarization_retries,
             )
             return None
 
@@ -157,6 +163,7 @@ def summarise_l2_to_l1(
     )
 
     layer.write_l1(summary)
+    _sync_l0_index(layer.memory_root, l2_entry.topic, summary_text)
     return summary
 
 
@@ -202,6 +209,7 @@ def summarise_topic_to_l1(
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _call_summarise_with_retry(
     topic: str,
     source_file: str,
@@ -230,7 +238,9 @@ def _call_summarise_with_retry(
                 logger.warning(
                     "Summarisation for topic=%s expanded content (%d > %d chars); "
                     "using original content as L1 summary.",
-                    topic, len(text), len(content),
+                    topic,
+                    len(text),
+                    len(content),
                 )
                 return content.strip()
             if _is_valid_summary(text, min_words=10):
@@ -238,16 +248,21 @@ def _call_summarise_with_retry(
             logger.warning(
                 "Summarisation output for topic=%s looks invalid (too short / "
                 "empty); attempt %d/%d",
-                topic, attempt + 1, 1 + cfg.max_summarization_retries,
+                topic,
+                attempt + 1,
+                1 + cfg.max_summarization_retries,
             )
         except Exception as exc:
             logger.warning(
                 "Summarisation call failed for topic=%s: %s; attempt %d/%d",
-                topic, exc, attempt + 1, 1 + cfg.max_summarization_retries,
+                topic,
+                exc,
+                attempt + 1,
+                1 + cfg.max_summarization_retries,
             )
 
         if attempt < cfg.max_summarization_retries:
-            delay = cfg.summarization_retry_base_delay * (2 ** attempt)
+            delay = cfg.summarization_retry_base_delay * (2**attempt)
             logger.debug("Retrying summarisation in %.1f seconds…", delay)
             time.sleep(delay)
 
@@ -269,13 +284,50 @@ def _is_valid_summary(text: str, min_words: int = 10) -> bool:
     if not text or len(text) < 40:
         return False
     words = text.split()
-    return len(words) >= min_words
+    if len(words) < min_words:
+        return False
+    # Reject obvious LLM filler patterns that carry no information
+    filler_phrases = [
+        "this document describes",
+        "the above content",
+        "in summary,",
+        "to summarize,",
+        "as mentioned above",
+    ]
+    lower = text.lower()
+    if any(p in lower for p in filler_phrases) and len(words) < 30:
+        return False
+    return True
+
+
+def _sync_l0_index(memory_root: Path, topic: str, summary_text: str) -> None:
+    """Ensure the topic has an entry in the L0 _index.md file."""
+    index_path = memory_root / "_index.md"
+    if not index_path.exists():
+        return
+
+    content = index_path.read_text()
+    # Check if topic already has a bullet in the index
+    topic_header = f"**{topic}**"
+    if topic_header in content:
+        return
+
+    # Extract a one-liner from the summary (first sentence, max 120 chars)
+    first_sentence = summary_text.split(".")[0].strip()
+    if len(first_sentence) > 120:
+        first_sentence = first_sentence[:117] + "..."
+    new_line = f"- **{topic}**: {first_sentence}"
+
+    content = content.rstrip() + "\n" + new_line + "\n"
+    index_path.write_text(content)
+    logger.info("L0 index updated with topic=%s", topic)
 
 
 def _get_model_name() -> str:
     """Return the cheap model name for recording in L1 metadata."""
     try:
         from sebba_code.llm import _cheap_llm
+
         # Access the internal model name via langchain's model instance
         return getattr(_cheap_llm, "model", "") or "unknown"
     except Exception:

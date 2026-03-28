@@ -9,13 +9,23 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from sebba_code.constants import DEBUG_PROMPTS, get_agent_dir
-from sebba_code.helpers.files import is_relevant, list_available_files, summarize_memory_files, summarize_rules
+from sebba_code.helpers.files import (
+    is_relevant,
+    list_available_files,
+    summarize_memory_files,
+    summarize_rules,
+)
 from sebba_code.helpers.markdown import summarise_file
 from sebba_code.helpers.memory_ops import format_session_from_summaries
 from pydantic import BaseModel
 
 from sebba_code.helpers.parsing import format_dict
-from sebba_code.llm import get_cheap_llm, get_llm, invoke_structured, invoke_with_timeout
+from sebba_code.llm import (
+    get_cheap_llm,
+    get_llm,
+    invoke_structured,
+    invoke_with_timeout,
+)
 from sebba_code.nodes.context import FileSelection
 from sebba_code.state import TaskResult, WorkerOutput, WorkerState
 from sebba_code.tools import get_worker_tools
@@ -80,6 +90,7 @@ def _get_max_tool_calls() -> int:
     """Get max tool calls per task from config."""
     try:
         from sebba_code.config import load_config
+
         return load_config(get_agent_dir()).execution.max_tool_calls_per_task
     except Exception:
         return 50
@@ -102,24 +113,29 @@ def _tools_condition_with_limit(state: WorkerState) -> str:
             return "__end__"
 
     tool_call_count = sum(
-        1 for m in messages
+        1
+        for m in messages
         if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)
     )
     max_calls = _get_max_tool_calls()
     if tool_call_count >= max_calls:
         logger.warning(
             "worker: reached max tool calls (%d/%d), forcing completion",
-            tool_call_count, max_calls,
+            tool_call_count,
+            max_calls,
         )
         return "__end__"
 
     # Detect repeated identical tool calls (stuck in a loop)
     from collections import Counter
+
     recent_calls = []
     for m in reversed(messages):
         if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
             for tc in m.tool_calls:
-                recent_calls.append((tc["name"], str(sorted(tc.get("args", {}).items()))))
+                recent_calls.append(
+                    (tc["name"], str(sorted(tc.get("args", {}).items())))
+                )
             if len(recent_calls) >= 8:
                 break
     if recent_calls:
@@ -128,7 +144,9 @@ def _tools_condition_with_limit(state: WorkerState) -> str:
         if top_count >= 3:
             logger.warning(
                 "worker: detected repeated tool call %s (%d times in last %d), forcing completion",
-                top_call[0], top_count, len(recent_calls),
+                top_call[0],
+                top_count,
+                len(recent_calls),
             )
             return "__end__"
 
@@ -152,7 +170,9 @@ def worker_recon(state: WorkerState) -> dict:
                 file_contents[f] = content
         elif path.is_dir():
             entries = sorted(p.name for p in path.iterdir())[:30]
-            file_contents[f] = f"(directory with {len(entries)} entries: {', '.join(entries)})"
+            file_contents[f] = (
+                f"(directory with {len(entries)} entries: {', '.join(entries)})"
+            )
         else:
             file_contents[f] = "(does not exist yet)"
 
@@ -162,7 +182,8 @@ def worker_recon(state: WorkerState) -> dict:
         if Path(f).is_file() and f.endswith((".ts", ".js", ".tsx", ".jsx", ".py")):
             result = subprocess.run(
                 ["grep", "-E", r"^(import|export.*from|from .* import)", f],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.stdout.strip():
                 dependency_map[f] = result.stdout.strip()
@@ -173,7 +194,12 @@ def worker_recon(state: WorkerState) -> dict:
         if not Path(f).is_file():
             continue
         stem = Path(f).stem
-        for pattern in [f"**/{stem}.test.ts", f"**/{stem}.spec.ts", f"**/{stem}_test.py", f"**/test_{stem}.py"]:
+        for pattern in [
+            f"**/{stem}.test.ts",
+            f"**/{stem}.spec.ts",
+            f"**/{stem}_test.py",
+            f"**/test_{stem}.py",
+        ]:
             for test_file in Path(".").glob(pattern):
                 test_files[str(test_file)] = test_file.read_text()[:1000]
 
@@ -183,7 +209,8 @@ def worker_recon(state: WorkerState) -> dict:
         if Path(f).exists():
             log = subprocess.run(
                 ["git", "log", "--oneline", "-5", "--", f],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             ).stdout
             if log:
                 git_history += f"\n### {f}\n{log}"
@@ -220,7 +247,11 @@ Write a concise, actionable briefing covering:
 def worker_match_rules(state: WorkerState) -> dict:
     """Load path-scoped rules matching the target files."""
     from fnmatch import fnmatch
-    from sebba_code.helpers.rules_ops import find_nearest_agent_dir, parse_path_frontmatter, strip_frontmatter
+    from sebba_code.helpers.rules_ops import (
+        find_nearest_agent_dir,
+        parse_path_frontmatter,
+        strip_frontmatter,
+    )
 
     agent_dir = get_agent_dir()
     target_files = state.get("target_files", [])
@@ -384,7 +415,11 @@ def _llm_call(state: WorkerState) -> dict:
         messages.append(injected_human_msg)
 
     if DEBUG_PROMPTS:
-        debug_logger.debug("── worker system prompt (%d chars) ──\n%s", len(system_prompt), system_prompt[:2000])
+        debug_logger.debug(
+            "── worker system prompt (%d chars) ──\n%s",
+            len(system_prompt),
+            system_prompt[:2000],
+        )
 
     response = llm.invoke(messages)
 
@@ -437,37 +472,51 @@ def worker_summarize(state: WorkerState) -> dict:
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
                 if tc["name"] == "signal_blocked":
-                    dag_mutations.append({
-                        "type": "add_blocking_task",
-                        "description": tc["args"]["blocking_task_description"],
-                        "reason": tc["args"]["reason"],
-                        "blocked_task_id": task["id"],
-                    })
+                    dag_mutations.append(
+                        {
+                            "type": "add_blocking_task",
+                            "description": tc["args"]["blocking_task_description"],
+                            "reason": tc["args"]["reason"],
+                            "blocked_task_id": task["id"],
+                        }
+                    )
                 elif tc["name"] == "add_subtask":
                     target_files = tc["args"].get("target_files", "")
-                    files = [f.strip() for f in target_files.split(",") if f.strip()] if target_files else []
-                    dag_mutations.append({
-                        "type": "add_subtask",
-                        "description": tc["args"]["description"],
-                        "target_files": files,
-                    })
+                    files = (
+                        [f.strip() for f in target_files.split(",") if f.strip()]
+                        if target_files
+                        else []
+                    )
+                    dag_mutations.append(
+                        {
+                            "type": "add_subtask",
+                            "description": tc["args"]["description"],
+                            "target_files": files,
+                        }
+                    )
 
     # Detect if the worker failed (timeout, error, or hit loop limit)
     failed = False
     if messages:
         last = messages[-1]
-        if isinstance(last, AIMessage) and isinstance(last.content, str) and last.content.startswith("Task execution failed:"):
+        if (
+            isinstance(last, AIMessage)
+            and isinstance(last.content, str)
+            and last.content.startswith("Task execution failed:")
+        ):
             failed = True
             summary_text = last.content
             what_i_did = f"- Failed: {last.content}"
 
     if failed and not dag_mutations:
         # Create a retry subtask so the work isn't lost
-        dag_mutations.append({
-            "type": "add_subtask",
-            "description": f"Retry: {task['description']} (previous attempt failed)",
-            "target_files": task.get("target_files", []),
-        })
+        dag_mutations.append(
+            {
+                "type": "add_subtask",
+                "description": f"Retry: {task['description']} (previous attempt failed)",
+                "target_files": task.get("target_files", []),
+            }
+        )
 
     formatted = _format_messages_for_summary(messages)
 
@@ -484,7 +533,9 @@ def worker_summarize(state: WorkerState) -> dict:
                 f' "files_touched": "comma-separated files modified (or empty string)"}}'
             )
             logger.info("worker_summarize: calling cheap LLM for task %s", task["id"])
-            result = invoke_structured(get_cheap_llm(), TaskSummaryResult, prompt, timeout_seconds=45)
+            result = invoke_structured(
+                get_cheap_llm(), TaskSummaryResult, prompt, timeout_seconds=45
+            )
             logger.info("worker_summarize: LLM responded for task %s", task["id"])
             if result:
                 summary_text = result.get("summary", summary_text)
@@ -492,7 +543,9 @@ def worker_summarize(state: WorkerState) -> dict:
                 decisions_made = result.get("decisions_made", "")
                 files_touched = result.get("files_touched", "")
         except TimeoutError:
-            logger.warning("Task %s summary LLM call timed out, using fallback", task["id"])
+            logger.warning(
+                "Task %s summary LLM call timed out, using fallback", task["id"]
+            )
         except Exception:
             logger.warning("Task summary failed, using fallback", exc_info=True)
 
@@ -577,7 +630,9 @@ def worker_commit_changes(state: WorkerState) -> dict:
         )
         commit_info = invoke_structured(get_cheap_llm(), CommitClassification, prompt)
     except Exception:
-        logger.warning("worker_commit: LLM commit message generation failed, using fallback")
+        logger.warning(
+            "worker_commit: LLM commit message generation failed, using fallback"
+        )
         commit_info = None
 
     if commit_info:
@@ -604,7 +659,9 @@ def worker_commit_changes(state: WorkerState) -> dict:
         logger.info("worker_commit: committed %s for task %s", sha, task["id"])
         task_result["commit_sha"] = sha
     else:
-        logger.warning("worker_commit: git commit failed: %s", result.stderr or result.stdout)
+        logger.warning(
+            "worker_commit: git commit failed: %s", result.stderr or result.stdout
+        )
         task_result["commit_sha"] = ""
 
     return {"task_result": task_result}
@@ -663,14 +720,17 @@ Rules:
 - Only extract genuinely NEW knowledge not already in memory
 - Empty lists if nothing new was learned
 - Keep index lines under 100 characters
-- The "content" field must be DETAILED and COMPREHENSIVE — include full context,
-  reasoning, specific examples, code snippets, and decision rationale.
-  This is the detailed reference layer. Do NOT summarize or condense.
+- The "content" field should capture KEY facts and decisions precisely.
+  Include specific filenames, function names, and code patterns that were discovered or changed.
+  Omit boilerplate, standard patterns, and repetition. Target 200-500 words per entry.
+  Quality over quantity — precise facts beat verbose descriptions.
 """
 
     try:
         logger.info("worker_extract_memory: calling cheap LLM for task %s", task["id"])
-        updates = invoke_structured(get_cheap_llm(), ExtractionResult, extraction_prompt)
+        updates = invoke_structured(
+            get_cheap_llm(), ExtractionResult, extraction_prompt
+        )
         logger.info("worker_extract_memory: LLM responded for task %s", task["id"])
     except TimeoutError:
         logger.warning("Task %s memory extraction LLM call timed out", task["id"])

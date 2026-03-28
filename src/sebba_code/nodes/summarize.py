@@ -53,9 +53,7 @@ def summarize_to_l1(state: AgentState) -> dict:
             future = pool.submit(
                 post_extraction_hook,
                 l2_entries=l2_entries,
-                topic="session",
                 background=False,
-                consolidate=False,
             )
             summaries = future.result(timeout=_SUMMARIZE_OVERALL_TIMEOUT)
 

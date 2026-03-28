@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
@@ -55,6 +56,7 @@ def _get_executor() -> ThreadPoolExecutor:
 # ──────────────────────────────────────────────────────────────────────────────
 # Public hook
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def post_extraction_hook(
     l2_entries: list[dict],
@@ -114,9 +116,8 @@ def post_extraction_hook(
         if not content or len(content) < cfg.min_l2_length_to_write:
             continue
 
-        entry_topic = (
-            entry_dict.get("topic")
-            or (Path(entry_dict.get("file", "")).stem if entry_dict.get("file") else "")
+        entry_topic = entry_dict.get("topic") or (
+            Path(entry_dict.get("file", "")).stem if entry_dict.get("file") else ""
         )
         entry_topic = entry_topic or f"topic_{i}"
         resolved_topic = resolved_topic or entry_topic
@@ -141,29 +142,29 @@ def post_extraction_hook(
     def _run():
         results: list[L1Summary] = []
         if consolidate:
-            results.extend(summarise_topic_to_l1(topic_for_summary, layer=ml, config=cfg))
-        elif len(entries) == 1:
-            result = summarise_l2_to_l1(entries[0], layer=ml, config=cfg)
-            if result:
-                results.append(result)
+            results.extend(
+                summarise_topic_to_l1(topic_for_summary, layer=ml, config=cfg)
+            )
         else:
-            # Parallelize across entries to reduce wall-clock time
-            with ThreadPoolExecutor(max_workers=min(len(entries), 4)) as pool:
-                futures = {
-                    pool.submit(summarise_l2_to_l1, entry, ml, cfg): entry
-                    for entry in entries
-                }
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
+            # Group entries by topic to avoid parallel writes to the same L1 file.
+            # Each topic produces exactly one consolidated L1 summary from all its L2 entries.
+            by_topic: dict[str, list[L2Entry]] = defaultdict(list)
+            for entry in entries:
+                by_topic[entry.topic].append(entry)
+
+            for t, topic_entries in by_topic.items():
+                try:
+                    if len(topic_entries) == 1:
+                        result = summarise_l2_to_l1(
+                            topic_entries[0], layer=ml, config=cfg
+                        )
                         if result:
                             results.append(result)
-                    except Exception as exc:
-                        entry = futures[future]
-                        logger.warning(
-                            "L1 summarisation failed for key=%s: %s",
-                            entry.key, exc,
-                        )
+                    else:
+                        consolidated = summarise_topic_to_l1(t, layer=ml, config=cfg)
+                        results.extend(consolidated)
+                except Exception as exc:
+                    logger.warning("L1 summarisation failed for topic=%s: %s", t, exc)
         return results
 
     if background:
@@ -175,6 +176,7 @@ def post_extraction_hook(
 # ──────────────────────────────────────────────────────────────────────────────
 # Synchronous convenience wrappers (useful in tests and REPL)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def summarise_and_write(
     content: str,
