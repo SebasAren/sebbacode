@@ -1,1 +1,0 @@
-## critique_roadmap Node / **Purpose**: Validates roadmap proposal and flags delegation issues that bypass human approval requirements / **New Feature**: EXPLORE_PATTERNS check added to identify unnecessary subagent delegation for explore tasks / **Location**: `src/sebba_code/nodes/planning.py` / **Output**: Flags returned when delegation without human approval is detected
